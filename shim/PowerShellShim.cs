@@ -7,13 +7,20 @@ using System.Text.RegularExpressions;
 
 /// <summary>
 /// shellfix — C# Shim (Layer 1)
-/// Intercepts `powershell -Command "..."` calls from IDE agents and routes:
-///   - Bash commands → WSL bash -c (with escaping)
-///   - Complex PS commands → temp .ps1 file + powershell -File
-///   - Simple PS commands → real powershell.exe passthrough
+/// 
+/// Two modes of operation:
+///   1. ONE-SHOT: Intercepts `powershell -Command "..."` calls and routes:
+///      - Bash commands → WSL bash -c (with escaping)
+///      - Complex PS commands → temp .ps1 file + powershell -File
+///      - Simple PS commands → real powershell.exe passthrough
+///   2. SESSION PROXY: When launched as an interactive shell (no -Command),
+///      spawns real powershell.exe and proxies stdin/stdout. Each line of
+///      stdin is inspected and rewritten to fix PS 5.1 parse errors in
+///      WSL/bash commands (&&, [N:-N], nested quotes).
 ///
 /// Install: compile to powershell.exe and place in a PATH directory that
-/// precedes C:\Windows\System32\WindowsPowerShell\v1.0\.
+/// precedes C:\Windows\System32\WindowsPowerShell\v1.0\, or configure
+/// your IDE to use this binary as its terminal shell.
 ///
 /// Kill switch: set environment variable PWSH_SHIM_BYPASS=1 to disable.
 /// Debug mode: set PWSH_SHIM_DEBUG=1 to log decisions to stderr.
@@ -70,9 +77,24 @@ else
     }
 }
 
-// If no -Command flag, pass through to real PowerShell
+// If no -Command flag, decide between interactive proxy and passthrough
 if (!foundCommand || string.IsNullOrWhiteSpace(commandStr))
 {
+    // Check if stdin is redirected (IDE terminal mode) or if launched
+    // with args that indicate interactive use (no args, or just flags
+    // like -NoExit, -NoProfile, -NoLogo)
+    bool isInteractive = !Console.IsInputRedirected || args.Length == 0 ||
+        args.All(a => a.StartsWith("-", StringComparison.OrdinalIgnoreCase) &&
+                      !a.Equals("-Command", StringComparison.OrdinalIgnoreCase) &&
+                      !a.Equals("-File", StringComparison.OrdinalIgnoreCase) &&
+                      !a.Equals("-EncodedCommand", StringComparison.OrdinalIgnoreCase));
+    
+    if (isInteractive)
+    {
+        if (debug) Console.Error.WriteLine("[SHIM] Interactive mode — starting session proxy");
+        return RunInteractiveProxy(args, debug);
+    }
+    
     if (debug) Console.Error.WriteLine($"[SHIM] No -Command found, passthrough: {string.Join(" ", args)}");
     return RunProcess(RealPowerShell, args);
 }
@@ -569,4 +591,172 @@ static List<string> ParseCommandArgs(string input)
         }
     }
     return args;
+}
+
+// ============================================================
+// Session Proxy Mode
+// ============================================================
+
+/// <summary>
+/// Spawns real powershell.exe as a child process with stdin redirected.
+/// Each line from our stdin is inspected by RewriteForProxy() before
+/// being sent to PS. Stdout and stderr pass through transparently.
+/// </summary>
+static int RunInteractiveProxy(string[] originalArgs, bool debug)
+{
+    var startInfo = new ProcessStartInfo
+    {
+        FileName = RealPowerShell,
+        UseShellExecute = false,
+        RedirectStandardInput = true,
+        // Do NOT redirect stdout/stderr — let them flow directly to our
+        // console so the IDE sees them natively (colors, prompts, etc.)
+        RedirectStandardOutput = false,
+        RedirectStandardError = false,
+    };
+
+    // Pass through any original args (like -NoExit, -NoProfile, -NoLogo)
+    foreach (var arg in originalArgs)
+    {
+        startInfo.ArgumentList.Add(arg);
+    }
+
+    // Prevent infinite recursion: tell the child PS not to invoke the shim
+    startInfo.Environment["PWSH_SHIM_BYPASS"] = "1";
+
+    using var process = Process.Start(startInfo);
+    if (process is null)
+    {
+        Console.Error.WriteLine("[SHIM] Failed to start PowerShell for proxy mode");
+        return 127;
+    }
+
+    var psStdin = process.StandardInput;
+    // Match PS encoding — UTF-8 no BOM
+    psStdin.AutoFlush = true;
+
+    // Read lines from our stdin and forward (possibly rewritten) to PS
+    string? line;
+    while ((line = Console.ReadLine()) != null)
+    {
+        if (process.HasExited) break;
+
+        string rewritten = RewriteForProxy(line, debug);
+        psStdin.WriteLine(rewritten);
+    }
+
+    // If stdin closed (IDE terminating), close PS stdin and wait
+    try { psStdin.Close(); } catch { }
+    process.WaitForExit();
+    return process.ExitCode;
+}
+
+/// <summary>
+/// Inspects a single line of stdin and rewrites it if it contains
+/// WSL/bash commands with PS 5.1-problematic tokens.
+///
+/// Strategy: detect lines that start with wsl/wsl.exe and contain
+/// tokens that PS 5.1 would choke on (&&, ||, [N:-N], complex nested
+/// quotes). Rewrite them to use --% stop-parsing token so PS passes
+/// everything literally to wsl.exe.
+///
+/// Lines that are pure PowerShell pass through unchanged.
+/// </summary>
+static string RewriteForProxy(string line, bool debug)
+{
+    string trimmed = line.TrimStart();
+    if (string.IsNullOrEmpty(trimmed)) return line;
+
+    // --- Detect WSL commands that need rewriting ---
+    // Pattern: wsl [-d distro] [--] bash -c "...problematic tokens..."
+    // Also catches: wsl.exe, bare wsl calls with bash -c
+    bool startsWithWsl = trimmed.StartsWith("wsl ", StringComparison.OrdinalIgnoreCase) ||
+                         trimmed.StartsWith("wsl.exe ", StringComparison.OrdinalIgnoreCase);
+
+    if (!startsWithWsl)
+    {
+        return line; // Not a WSL command — let the profile wrappers handle it
+    }
+
+    // --- WSL command detected. Check if it has problematic tokens ---
+    bool hasProblematic = HasProblematicTokens(trimmed);
+
+    if (!hasProblematic)
+    {
+        return line; // WSL command but no problematic tokens — safe
+    }
+
+    // --- Rewrite: inject --% after wsl/wsl.exe ---
+    // Input:  wsl -d Ubuntu-24.04 -- bash -c "echo hello && echo world"
+    // Output: wsl.exe --% -d Ubuntu-24.04 -- bash -c "echo hello && echo world"
+    string rewrittenLine;
+    if (trimmed.StartsWith("wsl.exe ", StringComparison.OrdinalIgnoreCase))
+    {
+        // Already wsl.exe — inject --% right after
+        rewrittenLine = "wsl.exe --% " + trimmed.Substring("wsl.exe ".Length);
+    }
+    else
+    {
+        // wsl → wsl.exe --% (must use .exe for --% to work with native commands)
+        rewrittenLine = "wsl.exe --% " + trimmed.Substring("wsl ".Length);
+    }
+
+    // Preserve leading whitespace from original line
+    string leadingWs = line.Substring(0, line.Length - line.TrimStart().Length);
+    rewrittenLine = leadingWs + rewrittenLine;
+
+    if (debug) Console.Error.WriteLine($"[SHIM-PROXY] Rewrite: {rewrittenLine.Substring(0, Math.Min(120, rewrittenLine.Length))}...");
+    return rewrittenLine;
+}
+
+/// <summary>
+/// Check if a line contains tokens that PS 5.1 would reject at parse time.
+/// </summary>
+static bool HasProblematicTokens(string line)
+{
+    // && and || — PS 5.1 doesn't support pipeline chain operators
+    // But we need to check they're not inside a quoted string
+    // Simple heuristic: if the line contains && or || outside of PS-style
+    // string contexts, it's problematic
+    if (Regex.IsMatch(line, @"&&|\|\|")) return true;
+
+    // [N:-N] or [N:N] — PS interprets as array index/slice
+    if (Regex.IsMatch(line, @"\[\d+:-?\d+\]")) return true;
+
+    // Nested single quotes inside double quotes with bash-specific patterns
+    // e.g., bash -c "python3 -c 'print(...)'"
+    if (line.Contains("bash") && line.Contains("-c") &&
+        line.Contains("'") && line.Contains("\""))
+        return true;
+
+    return false;
+}
+
+/// <summary>
+/// Check if a non-WSL line looks like a bash command AND has problematic tokens.
+/// This catches cases where the agent sends bare bash commands like:
+///   grep "pattern" file && echo "found"
+///   python3 -c 'print(x[1:-1])'
+/// </summary>
+static bool LooksLikeBashWithProblematicTokens(string line)
+{
+    if (!HasProblematicTokens(line)) return false;
+    if (!LooksLikeBash(line)) return false;
+
+    // Extra safety: don't rewrite lines that look like they're using
+    // PS-specific features even if they have &&
+    if (line.Contains("$?") || line.Contains("$LASTEXITCODE")) return false;
+
+    return true;
+}
+
+/// <summary>
+/// Escape a bare command string for embedding in bash -c "...".
+/// Escapes double quotes and dollar signs.
+/// </summary>
+static string EscapeForBashC(string cmd)
+{
+    return cmd.Replace("\\", "\\\\")
+              .Replace("\"", "\\\"")
+              .Replace("$", "\\$");
 }
