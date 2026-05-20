@@ -1,0 +1,9 @@
+bin/
+out/
+obj/
+*.user
+*.suo
+.vs/
+shim/bin/
+shim/out/
+shim/obj/
