@@ -313,11 +313,20 @@ if (-not (Test-Path $BinDir)) {
     Write-Ok "Created: $BinDir"
 }
 
-# Copy shim
+# Copy shim — check two possible locations:
+#   1. shim/out/powershell.exe (built from source)
+#   2. powershell.exe in same directory as install.ps1 (downloaded from release)
 $outExe = Join-Path $PSScriptRoot "shim\out\powershell.exe"
+if (-not (Test-Path $outExe)) {
+    $outExe = Join-Path $PSScriptRoot "powershell.exe"
+}
+if (-not (Test-Path $outExe)) {
+    Write-Err "Cannot find shim binary. Either build from source (remove -SkipBuild) or place powershell.exe next to install.ps1"
+    exit 1
+}
 $targetExe = Join-Path $BinDir "powershell.exe"
 Copy-Item $outExe $targetExe -Force
-Write-Ok "Installed: $targetExe"
+Write-Ok "Installed: $targetExe (from $outExe)"
 
 # Copy PDB for debugging
 $outPdb = Join-Path $PSScriptRoot "shim\out\powershell.pdb"
@@ -343,7 +352,17 @@ if (-not $SkipProfile) {
 
     $profileDir = "$env:USERPROFILE\Documents\WindowsPowerShell"
     $profilePath = Join-Path $profileDir "Microsoft.PowerShell_profile.ps1"
+    # Check two possible locations for the source profile:
+    #   1. profile/Microsoft.PowerShell_profile.ps1 (repo layout)
+    #   2. Microsoft.PowerShell_profile.ps1 in same directory (release download)
     $sourceProfile = Join-Path $PSScriptRoot "profile\Microsoft.PowerShell_profile.ps1"
+    if (-not (Test-Path $sourceProfile)) {
+        $sourceProfile = Join-Path $PSScriptRoot "Microsoft.PowerShell_profile.ps1"
+    }
+    if (-not (Test-Path $sourceProfile)) {
+        Write-Warn "Profile source not found. Skipping profile installation."
+        Write-Warn "Place Microsoft.PowerShell_profile.ps1 next to install.ps1 or clone the full repo."
+    } else {
 
     # Update distro name in profile if not default
     if ($WslDistro -ne "Ubuntu-24.04") {
@@ -360,6 +379,7 @@ if (-not $SkipProfile) {
         Copy-Item $sourceProfile $profilePath -Force
     }
     Write-Ok "Profile installed: $profilePath"
+    } # end else (profile found)
 }
 
 # ================================================================

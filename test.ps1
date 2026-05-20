@@ -28,7 +28,21 @@ function Test-Case {
                 return
             }
         }
-        $output = & $shimPath -Command $Command 2>&1 | Out-String
+        # Use Start-Process with -ArgumentList to preserve the raw command string.
+        # Direct invocation (& $shimPath -Command $Command) causes PS to re-parse
+        # the command, mangling quotes and special characters before the shim sees it.
+        $tempOut = [System.IO.Path]::GetTempFileName()
+        try {
+            $proc = Start-Process -FilePath $shimPath `
+                -ArgumentList "-NoProfile", "-Command", $Command `
+                -NoNewWindow -Wait -PassThru `
+                -RedirectStandardOutput $tempOut `
+                -RedirectStandardError ([System.IO.Path]::GetTempFileName()) 2>$null
+            $output = Get-Content $tempOut -Raw -ErrorAction SilentlyContinue
+            if (-not $output) { $output = "" }
+        } finally {
+            Remove-Item $tempOut -Force -ErrorAction SilentlyContinue
+        }
     } else {
         $output = Invoke-Expression $Command 2>&1 | Out-String
     }

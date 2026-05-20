@@ -196,10 +196,12 @@ static bool LooksLikeBash(string cmd)
         // text/misc
         "echo", "printf", "date", "cal", "seq", "yes",
         "xxd", "od", "strings", "bc",
-        // dev tools
-        "python3", "pip3", "python", "pip", "npm", "node", "npx",
-        "git", "make", "gcc", "g++", "cargo", "rustc",
-        "docker", "docker-compose", "kubectl",
+        // dev tools — only tools that are WSL/Linux-only
+        // NOTE: git, npm, node, npx, docker, kubectl, cargo, rustc, make, gcc, g++
+        // are EXCLUDED because they have Windows-native installs. The profile
+        // wraps them with NativeCommandError suppression instead. Routing them
+        // to WSL causes 'command not found' or wrong-repo state.
+        "python3", "pip3", "python", "pip",
         // bash control flow
         "for", "while", "until", "case", "select",
         // shell builtins

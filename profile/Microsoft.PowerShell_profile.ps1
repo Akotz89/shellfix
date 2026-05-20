@@ -150,7 +150,7 @@ function global:Test-WslHealth {
 # --- Shim PATH Guard ---
 # Verify our shim is first in PATH (only warn, don't break)
 function global:Test-ShimPath {
-    $shimPath = "C:\Users\Aaron\bin\powershell.exe"
+    $shimPath = Join-Path $env:USERPROFILE "bin\powershell.exe"
     if (Test-Path $shimPath) {
         $resolved = (Get-Command powershell.exe -ErrorAction SilentlyContinue).Source
         if ($resolved -and $resolved -ne $shimPath) {
