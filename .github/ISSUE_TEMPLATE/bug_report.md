@@ -30,11 +30,21 @@ What actually happened. Include the full error output.
 ## Environment
 
 - **Windows version:** (e.g., Windows 11 23H2)
-- **WSL distro:** (output of `wsl --list`)
+- **WSL distro:** (output of `wsl --list --verbose`)
+- **Configured shellfix distro:** (output of `$env:SHELLFIX_WSL_DISTRO`)
 - **PowerShell version:** (output of `$PSVersionTable.PSVersion`)
 - **IDE/Agent:** (e.g., Cursor 0.48, Windsurf, Antigravity)
-- **shellfix version:** (output of `git log -1 --oneline` in the shellfix repo)
+- **shellfix version:** (release tag or `git log -1 --oneline`)
+- **Install path:** (output of `(Get-Command powershell.exe).Source`)
+- **Shim hash:** (output of `Get-FileHash <path-to-shellfix-powershell.exe> -Algorithm SHA256`)
 - **Profile loaded:** (output of `$env:PS_PROFILE_LOADED`)
+
+## Runtime mode
+
+- [ ] One-shot: `powershell -Command`
+- [ ] Session proxy / interactive terminal
+- [ ] Agent `run_command`
+- [ ] Not sure
 
 ## Debug output
 
@@ -42,4 +52,10 @@ Set `$env:PWSH_SHIM_DEBUG = "1"` and re-run the command, then paste the `[SHIM]`
 
 ```
 paste debug output here
+```
+
+## Verification attempted
+
+```powershell
+.\test-ci-smoke.ps1 -ShimPath <path-to-shellfix-powershell.exe>
 ```

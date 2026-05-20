@@ -1,6 +1,6 @@
 # Contributing to shellfix
 
-Thanks for your interest! Here's how to help.
+Thanks for your interest. shellfix shadows `powershell.exe`, so changes need clear scope and evidence.
 
 ## Quick Start
 
@@ -8,6 +8,7 @@ Thanks for your interest! Here's how to help.
 git clone https://github.com/Akotz89/shellfix.git
 cd shellfix
 .\install.ps1
+.\test-ci-smoke.ps1
 .\test.ps1
 ```
 
@@ -23,7 +24,10 @@ dotnet publish -c Release -o out
 ### Running tests
 
 ```powershell
-.\test.ps1 -Verbose
+.\test-ci-smoke.ps1 -ShimPath .\shim\out\powershell.exe
+.\test.ps1 -ShimPath .\shim\out\powershell.exe
+.\test-proxy.ps1 -ShimPath .\shim\out\powershell.exe
+.\test-replay.ps1 -ShimPath .\shim\out\powershell.exe
 ```
 
 ### Project structure
@@ -42,9 +46,10 @@ shellfix/
 │   └── release.yml          #   Build + GitHub Release on tag push
 ├── install.ps1              # Installer (build, profile, IDE shortcuts)
 ├── launch-ide.bat           # Generic IDE launcher (PATH prepend)
-├── test.ps1                 # Layer 2+3 test suite (44 tests)
+├── test-ci-smoke.ps1        # CI smoke suite (5 checks)
+├── test.ps1                 # Full one-shot/profile suite (48 tests)
 ├── test-proxy.ps1           # Session proxy test suite (16 tests)
-├── test-replay.ps1          # Historical session replay (9 tests)
+├── test-replay.ps1          # Historical session replay (10 tests)
 ├── README.md
 ├── CHANGELOG.md
 ├── CONTRIBUTING.md
@@ -57,9 +62,11 @@ shellfix/
 1. **Fork** the repo
 2. **Create a branch** (`git checkout -b fix/my-fix`)
 3. **Make changes** — follow existing code style
-4. **Run tests** (`.\test.ps1`) — all must pass
+4. **Run relevant tests** — at minimum `.\test-ci-smoke.ps1`
 5. **Commit** with a clear message
 6. **Open a PR**
+
+Use the PR template. Include the exact verification commands, CI run, linked GitHub issue, linked Linear issue when present, risk, and install/release impact.
 
 ## What to Contribute
 
@@ -80,6 +87,14 @@ shellfix/
 - Improve documentation and examples
 - Report failure patterns from any IDE agent
 
+## Documentation And Release Claims
+
+- Do not say behavior is fixed without a passing test, manual verification command, CI run, commit, PR, tag, or release URL.
+- Keep public wording operator-facing. Avoid chat-derived phrasing, dramatic claims, and unverified implementation stories.
+- Put broad claim evidence in `docs/CLAIM_EVIDENCE.md`.
+- Use `docs/MAINTAINER_CHECKLIST.md` before closing issues or publishing releases.
+- Keep `docs/TRACKING.md` aligned when GitHub/Linear/release status changes.
+
 ## Code Style
 
 - **C#**: follow existing patterns, no unnecessary abstractions
@@ -92,6 +107,9 @@ Include:
 - The command that failed
 - The error output (full text)
 - Which class of failure (1/2/3)
-- Your WSL distro (`wsl --list`)
+- Your WSL distro (`wsl --list --verbose`)
+- Your configured shellfix distro (`$env:SHELLFIX_WSL_DISTRO`)
+- The shim path (`(Get-Command powershell.exe).Source`)
+- The shim hash (`Get-FileHash <path> -Algorithm SHA256`)
 - Debug output (`$env:PWSH_SHIM_DEBUG = "1"`)
 - Whether the profile is loaded (`$env:PS_PROFILE_LOADED`)
