@@ -1,4 +1,4 @@
-# wsl-shell-hardening — Install Script
+# shellfix - Install Script
 # Run from the repo root: .\install.ps1
 
 param(
@@ -20,7 +20,7 @@ function Write-Err { param($msg) Write-Host "  [X] $msg" -ForegroundColor Red }
 # Uninstall
 # ================================================================
 if ($Uninstall) {
-    Write-Step "Uninstalling wsl-shell-hardening"
+    Write-Step "Uninstalling shellfix"
     
     $shimPath = Join-Path $BinDir "powershell.exe"
     if (Test-Path $shimPath) {
@@ -33,7 +33,7 @@ if ($Uninstall) {
     $profilePath = "$env:USERPROFILE\Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1"
     if (Test-Path $profilePath) {
         $content = Get-Content $profilePath -Raw
-        if ($content -match 'Antigravity Agent Shell Hardening') {
+        if ($content -match 'shellfix|Antigravity Agent Shell Hardening') {
             Write-Warn "Profile contains shell hardening. Remove manually: $profilePath"
         }
     }

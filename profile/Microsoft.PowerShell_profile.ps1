@@ -1,6 +1,6 @@
-# === Antigravity Agent Shell Hardening v10 ===
+# === shellfix — PowerShell Profile ===
 # Loaded automatically on every agent command (powershell -Command).
-# Uses bash -c for command execution with careful quoting.
+# Layer 2: Bash wrappers | Layer 3: NativeCommandError suppression
 
 # --- UTF-8 Encoding ---
 $utf8NoBom = [System.Text.UTF8Encoding]::new($false)

@@ -1,9 +1,18 @@
+# Build outputs
 bin/
 out/
 obj/
-*.user
-*.suo
-.vs/
 shim/bin/
 shim/out/
 shim/obj/
+
+# IDE
+*.user
+*.suo
+.vs/
+.idea/
+.vscode/
+
+# Temp files
+release-notes.md
+*.tmp

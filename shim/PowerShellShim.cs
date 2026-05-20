@@ -6,9 +6,11 @@ using System.Linq;
 using System.Text.RegularExpressions;
 
 /// <summary>
-/// PowerShell Shim v4 — intercepts `powershell -Command "..."` calls from the
-/// Antigravity IDE agent and routes bash-looking commands to WSL bash.
-/// PowerShell-looking commands pass through to the real powershell.exe.
+/// shellfix — C# Shim (Layer 1)
+/// Intercepts `powershell -Command "..."` calls from IDE agents and routes:
+///   - Bash commands → WSL bash -c (with escaping)
+///   - Complex PS commands → temp .ps1 file + powershell -File
+///   - Simple PS commands → real powershell.exe passthrough
 ///
 /// Install: compile to powershell.exe and place in a PATH directory that
 /// precedes C:\Windows\System32\WindowsPowerShell\v1.0\.
