@@ -2,13 +2,42 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.1.0] — 2026-05-20
+
+### Added — Two New Failure Classes
+
+Discovered during real-world usage that bash→WSL routing (Class 1) was only one of three distinct failure modes agents hit. Added fixes for Classes 2 and 3.
+
+#### Class 2: Complex PS Quoting → `-File` Fallback
+- Added `HasDangerousQuoting()` heuristic to detect multi-line commands, unbalanced quotes, and mixed quoting patterns that break PS 5.1's `-Command` parser
+- Added `RunPsViaFile()` which writes commands to a temp `.ps1` file and runs with `-File`, completely bypassing argument parsing
+- Temp files are cleaned up automatically after execution
+
+#### Class 3: NativeCommandError Suppression
+- Profile now wraps `git`, `npm`, `npx`, `dotnet`, `gh`, `cargo`, `rustc`, `docker`, and `kubectl` in functions that merge stderr to stdout as plain strings
+- Prevents PS 5.1 from treating normal stderr output (progress, warnings, diagnostics) as errors (red text)
+- Exit codes still propagate correctly via `$LASTEXITCODE`
+
+### Changed
+- Renamed repo from `wsl-shell-hardening` to `shellfix`
+- README rewritten to document all three failure classes
+- Architecture diagram updated to show three routing paths
+
+### Infrastructure
+- Added GitHub Actions CI (build + artifact upload)
+- Added CONTRIBUTING.md
+- Added `.editorconfig`
+- Added GitHub topics for discoverability
+
+---
+
 ## [1.0.0] — 2026-05-20
 
-### Initial Release
+### Initial Release — Class 1: Bash Routing
 
 Two-layer defense system for running bash commands through Windows PowerShell terminals.
 
-#### Layer 1: C# Shim (v4)
+#### Layer 1: C# Shim
 - Heuristic classifier (100+ bash commands, PS verb-noun detection, syntax markers)
 - Path translation: Windows → WSL with space-safe quoting
 - Apostrophe escaping (`'` → `\'`) — fixes infinite hang on `grep "it's"`
@@ -18,17 +47,10 @@ Two-layer defense system for running bash commands through Windows PowerShell te
 - WSL_UTF8 environment enforcement
 - Kill switch and debug mode
 
-#### Layer 2: PowerShell Profile (v10)
+#### Layer 2: PowerShell Profile
 - 50+ bash command wrappers with pipeline support
 - Conflicting alias removal (curl, diff, sort, cat, etc.)
 - Per-argument path translation and quoting
 - WSLENV passthrough for common environment variables
 - WSL health check function
-- Shim PATH verification function
 - UTF-8 no-BOM encoding throughout
-
-#### Infrastructure
-- Automated installer with pre-flight checks and uninstall
-- 23+ test suite with shim, profile, and exit code coverage
-- GitHub Actions CI
-- MIT license

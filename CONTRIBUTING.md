@@ -30,15 +30,17 @@ dotnet publish -c Release -o out
 
 ```
 shellfix/
-├── shim/                    # C# shim source
-│   ├── PowerShellShim.cs    # Main logic
+├── shim/                    # Layer 1: C# shim source
+│   ├── PowerShellShim.cs    #   Classifier, router, escaping
 │   └── PowerShellShim.csproj
-├── profile/                 # PowerShell profile
+├── profile/                 # Layers 2+3: PowerShell profile
 │   └── Microsoft.PowerShell_profile.ps1
+│       # Layer 2: 50+ bash wrappers
+│       # Layer 3: NativeCommandError suppression
 ├── .github/workflows/       # CI
 │   └── ci.yml
-├── install.ps1              # Installer
-├── test.ps1                 # Test suite
+├── install.ps1              # Installer with pre-flight checks
+├── test.ps1                 # Three-class test suite
 ├── README.md
 ├── CONTRIBUTING.md
 ├── CHANGELOG.md
@@ -49,17 +51,29 @@ shellfix/
 
 1. **Fork** the repo
 2. **Create a branch** (`git checkout -b fix/my-fix`)
-3. **Make your changes** — follow existing code style
+3. **Make changes** — follow existing code style
 4. **Run tests** (`.\test.ps1`) — all must pass
 5. **Commit** with a clear message
-6. **Open a PR** with a description of what and why
+6. **Open a PR**
 
 ## What to Contribute
 
-- **New bash commands** — add to the `$wslCommands` array in the profile and `bashCommands` array in the shim
-- **Edge cases** — if you find a command that breaks, add a test and fix it
-- **Distro support** — test with other WSL distributions
-- **Documentation** — improve the README, add examples
+### Class 1 (Bash routing)
+- Add commands to `bashCommands` in the shim and `$wslCommands` in the profile
+- Fix edge cases in path translation or quoting
+
+### Class 2 (PS quoting)
+- Improve `HasDangerousQuoting()` heuristic with new patterns
+- Report commands that should trigger `-File` mode but don't
+
+### Class 3 (NativeCommandError)
+- Add tools to `$nativeTools` in the profile that write to stderr
+- Test exit code propagation for wrapped tools
+
+### General
+- Test with other WSL distributions
+- Improve documentation and examples
+- Report failure patterns from any IDE agent
 
 ## Code Style
 
@@ -71,7 +85,8 @@ shellfix/
 
 Include:
 - The command that failed
-- The error output
+- The error output (full text)
+- Which class of failure (1/2/3)
 - Your WSL distro (`wsl --list`)
-- Whether you're using the shim, profile, or both
 - Debug output (`$env:PWSH_SHIM_DEBUG = "1"`)
+- Whether the profile is loaded (`$env:PS_PROFILE_LOADED`)
