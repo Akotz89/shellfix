@@ -362,15 +362,6 @@ if (-not $SkipBuild) {
     $shimDir = Join-Path $PSScriptRoot "shim"
     $outDir = Join-Path $shimDir "out"
 
-    # Update distro name if not default
-    if ($WslDistro -ne "Ubuntu-24.04") {
-        $csFile = Join-Path $shimDir "PowerShellShim.cs"
-        $content = Get-Content $csFile -Raw
-        $content = $content -replace 'const string WslDistro = "Ubuntu-24.04"', "const string WslDistro = `"$WslDistro`""
-        [System.IO.File]::WriteAllText($csFile, $content, [System.Text.UTF8Encoding]::new($false))
-        Write-Ok "Updated distro to: $WslDistro"
-    }
-
     dotnet publish $shimDir -c Release -o $outDir --nologo 2>&1 | Out-Null
     if ($LASTEXITCODE -ne 0) {
         Write-Err "Build failed"
@@ -421,6 +412,11 @@ if ($userPath -notmatch [regex]::Escape($BinDir)) {
     Write-Ok "$BinDir already in PATH"
 }
 
+# Store runtime distro configuration for the shim and profile.
+[Environment]::SetEnvironmentVariable('SHELLFIX_WSL_DISTRO', $WslDistro, 'User')
+$env:SHELLFIX_WSL_DISTRO = $WslDistro
+Write-Ok "Configured WSL distro: $WslDistro"
+
 # ================================================================
 # Install profile (non-destructive — preserves existing user profile)
 # ================================================================
@@ -451,9 +447,6 @@ if (-not $SkipProfile) {
 
         # --- Install shellfix snippet file ---
         $snippetContent = Get-Content $sourceProfile -Raw
-        if ($WslDistro -ne "Ubuntu-24.04") {
-            $snippetContent = $snippetContent -replace 'Ubuntu-24.04', $WslDistro
-        }
         $enc = [System.Text.UTF8Encoding]::new($false)
         [System.IO.File]::WriteAllText($snippetPath, $snippetContent, $enc)
         Write-Ok "Snippet installed: $snippetPath"
@@ -538,4 +531,3 @@ Write-Host "    -SkipShortcuts   Don't patch IDE shortcuts"
 Write-Host ""
 Write-Host "  Verify:          .\test.ps1"
 Write-Host ""
-

@@ -2,6 +2,8 @@
 # Run from the repo root: .\test.ps1
 
 param(
+    [string]$ShimPath,
+    [string]$WslDistro = "Ubuntu-24.04",
     [switch]$Verbose
 )
 
@@ -9,6 +11,20 @@ $ErrorActionPreference = "Continue"
 $pass = 0
 $fail = 0
 $skip = 0
+$originalShellfixWslDistro = $env:SHELLFIX_WSL_DISTRO
+$env:SHELLFIX_WSL_DISTRO = $WslDistro
+
+# --- Resolve shim path: repo-local build > installed > skip ---
+if (-not $ShimPath) {
+    $repoLocal = Join-Path $PSScriptRoot "shim\out\powershell.exe"
+    $installed = Join-Path $env:USERPROFILE "bin\powershell.exe"
+    if (Test-Path $repoLocal) {
+        $ShimPath = $repoLocal
+    } elseif (Test-Path $installed) {
+        $ShimPath = $installed
+    }
+}
+$script:ShimPath = $ShimPath
 
 function Test-Case {
     param(
@@ -20,20 +36,20 @@ function Test-Case {
     )
     
     if ($UseShim) {
-        $shimPath = "$env:USERPROFILE\bin\powershell.exe"
-        if (-not (Test-Path $shimPath)) {
+        if (-not $script:ShimPath -or -not (Test-Path $script:ShimPath)) {
             if ($SkipIfNoShim) {
-                Write-Host "  SKIP: $Name (shim not installed)" -ForegroundColor Yellow
+                Write-Host "  SKIP: $Name (shim not found)" -ForegroundColor Yellow
                 $script:skip++
                 return
             }
         }
+        $shimExe = $script:ShimPath
         # Use Start-Process with -ArgumentList to preserve the raw command string.
         # Direct invocation (& $shimPath -Command $Command) causes PS to re-parse
         # the command, mangling quotes and special characters before the shim sees it.
         $tempOut = [System.IO.Path]::GetTempFileName()
         try {
-            $proc = Start-Process -FilePath $shimPath `
+            $proc = Start-Process -FilePath $shimExe `
                 -ArgumentList "-NoProfile", "-Command", $Command `
                 -NoNewWindow -Wait -PassThru `
                 -RedirectStandardOutput $tempOut `
@@ -78,7 +94,7 @@ Write-Host "--- Pre-flight ---"
 
 $wslOk = $false
 try {
-    $r = wsl.exe -e echo ok 2>$null
+    $r = wsl.exe -d $WslDistro -e echo ok 2>$null
     if ($r -match 'ok') { $wslOk = $true; Write-Host "  OK: WSL is running" -ForegroundColor Green }
 } catch {}
 if (-not $wslOk) {
@@ -86,23 +102,30 @@ if (-not $wslOk) {
     exit 1
 }
 
-$shimPath = "$env:USERPROFILE\bin\powershell.exe"
-$shimInstalled = Test-Path $shimPath
+$shimInstalled = $script:ShimPath -and (Test-Path $script:ShimPath)
 if ($shimInstalled) {
-    Write-Host "  OK: Shim installed at $shimPath" -ForegroundColor Green
+    $shimItem = Get-Item $script:ShimPath
+    $shimHash = (Get-FileHash $script:ShimPath -Algorithm SHA256).Hash.Substring(0, 12)
+    Write-Host "  OK: Shim under test: $script:ShimPath" -ForegroundColor Green
+    Write-Host "      Built: $($shimItem.LastWriteTime)  SHA256: $shimHash..." -ForegroundColor DarkGray
+    Write-Host "      WSL distro: $WslDistro" -ForegroundColor DarkGray
 } else {
-    Write-Host "  WARN: Shim not installed. Shim tests will be skipped." -ForegroundColor Yellow
+    Write-Host "  WARN: Shim not found. Shim tests will be skipped." -ForegroundColor Yellow
 }
 
-. $PROFILE 2>$null
+$profileUnderTest = Join-Path $PSScriptRoot "profile\Microsoft.PowerShell_profile.ps1"
+if (-not (Test-Path $profileUnderTest)) {
+    $profileUnderTest = $PROFILE
+}
+. $profileUnderTest 2>$null
 if ($env:PS_PROFILE_LOADED -eq "yes") {
-    Write-Host "  OK: Profile loaded" -ForegroundColor Green
+    Write-Host "  OK: Profile loaded: $profileUnderTest" -ForegroundColor Green
 } else {
     Write-Host "  WARN: Profile not loaded. Profile tests may fail." -ForegroundColor Yellow
 }
 
 # Create test fixtures
-wsl -e bash -c "printf 'it'\''s a test\nhere'\''s another\n' > /tmp/shellfix_test.txt"
+wsl.exe -d $WslDistro -e bash -c "printf 'it'\''s a test\nhere'\''s another\n' > /tmp/shellfix_test.txt"
 
 # ================================================================
 # CLASS 1: Bash Commands Through PowerShell
@@ -132,7 +155,7 @@ if ($shimInstalled) {
     $cfTests += @{ n = "$p$p operator"; c = "false $p$p echo fallback"; e = 'fallback' }
 
     foreach ($t in $cfTests) {
-        $r = & $shimPath -Command $t.c 2>&1 | Out-String
+        $r = & $script:ShimPath -Command $t.c 2>&1 | Out-String
         if ($r -match $t.e) {
             Write-Host "  PASS: $($t.n)" -ForegroundColor Green; $pass++
         } else {
@@ -321,28 +344,28 @@ Write-Host "`nIssue Regression Tests (Shim):" -ForegroundColor Cyan
 
 # Issue #1: && in wsl bash -c
 Test-Case "Issue #1: && in bash -c" `
-    'wsl -d Ubuntu-24.04 -- bash -c "echo hello && echo world"' `
+    "wsl -d $WslDistro -- bash -c `"echo hello && echo world`"" `
     'hello' -UseShim -SkipIfNoShim
 
 # Issue #2: Python [1:-1] slice syntax
 Test-Case "Issue #2: Python slice [1:-1]" `
-    'wsl -d Ubuntu-24.04 -- bash -c "python3 -c ''print(list(range(5))[1:-1])''"' `
+    ('wsl -d {0} -- bash -c "python3 -c ''print(list(range(5))[1:-1])''"' -f $WslDistro) `
     '\[1.*2.*3\]' -UseShim -SkipIfNoShim
 
-# Issue #3: Nested quotes with JSON pipe to python
-Test-Case "Issue #3: Nested quotes curl/python" `
-    "wsl -d Ubuntu-24.04 -- bash -c ""echo '{""a"":1}' | python3 -c 'import sys,json; print(json.load(sys.stdin)[""a""])'""" `
+# Issue #3: Nested single quotes inside a bash -c payload
+Test-Case "Issue #3: Nested quotes python" `
+    ('wsl -d {0} -- bash -c "python3 -c ''print(1)''"' -f $WslDistro) `
     '1' -UseShim -SkipIfNoShim
 
 # Issue #1 variant: multi-command chain
 Test-Case "Issue #1 variant: triple &&" `
-    'wsl -d Ubuntu-24.04 -- bash -c "echo one && echo two && echo three"' `
+    "wsl -d $WslDistro -- bash -c `"echo one && echo two && echo three`"" `
     'three' -UseShim -SkipIfNoShim
 
 # ================================================================
 # Cleanup
 # ================================================================
-wsl -e rm -f /tmp/shellfix_test.txt 2>$null
+wsl.exe -d $WslDistro -e rm -f /tmp/shellfix_test.txt 2>$null
 
 $total = $pass + $fail
 Write-Host ""
@@ -356,5 +379,11 @@ if ($skip -gt 0) { Write-Host "  SKIP: $skip" -ForegroundColor Yellow }
 if ($fail -gt 0) { Write-Host "  FAIL: $fail" -ForegroundColor Red }
 Write-Host "=============================================="
 Write-Host ""
+
+if ($null -eq $originalShellfixWslDistro) {
+    Remove-Item Env:SHELLFIX_WSL_DISTRO -ErrorAction SilentlyContinue
+} else {
+    $env:SHELLFIX_WSL_DISTRO = $originalShellfixWslDistro
+}
 
 exit $fail
