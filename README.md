@@ -58,39 +58,39 @@ Agents see red text, think the command failed, and spiral into desperate workaro
 
 ## Architecture
 
-```
-┌──────────────────────────────────────────────────┐
-│  IDE / Agent calls: powershell -Command "..."    │
-└─────────────────────┬────────────────────────────┘
-                      │
-         ┌────────────▼────────────────┐
-         │  Layer 1: C# Shim           │
-         │  powershell.exe in PATH     │
-         │                             │
-         │  • Heuristic classifier     │
-         │  • Bash → WSL bash -c       │
-         │  • Complex PS → temp .ps1   │
-         │  • Simple PS → passthrough  │
-         │  • Path translation         │
-         │  • Quote/glob escaping      │
-         │  • WSL crash fallback       │
-         └─────┬─────┬─────┬──────────┘
-               │     │     │
-      ┌────────▼┐ ┌──▼──┐ ┌▼─────────────────────┐
-      │WSL bash │ │-File│ │Real powershell.exe    │
-      └─────────┘ └─────┘ │+ Profile (Layer 2+3) │
-                           │                      │
-                           │• 50+ bash wrappers   │
-                           │• Pipeline support    │
-                           │• Alias deconfliction │
-                           |• NativeCommandError  |
-                           |  suppression (git,   |
-                           |  npm, gh, dotnet...) |
-                           |• ANSI escape strip   |
-                           |• dotnet --tl:off     |
-                           |• UTF-8 enforcement   |
-                           |• NO_COLOR / TERM=dumb|
-                           └──────────────────────┘
+```mermaid
+flowchart TD
+    IDE["IDE / Agent calls:<br/><code>powershell -Command '...'</code>"]
+    IDE --> SHIM
+
+    subgraph SHIM["Layer 1: C# Shim (powershell.exe in PATH)"]
+        direction TB
+        CLS["Heuristic Classifier"]
+        CLS --> |"Bash syntax"| BASH
+        CLS --> |"Complex quoting"| FILE
+        CLS --> |"Simple PS"| PASS
+    end
+
+    BASH["WSL bash -c<br/>Path translation<br/>Quote/glob escaping<br/>Dollar-sign preservation"]
+    FILE["-File fallback<br/>Write temp .ps1<br/>Bypass PS argument parser"]
+
+    subgraph REAL["Real powershell.exe + Profile (Layers 2 & 3)"]
+        direction TB
+        L2["<b>Layer 2: Bash Wrappers</b><br/>50+ commands (grep, curl, awk...)<br/>Pipeline support<br/>Alias deconfliction"]
+        L3["<b>Layer 3: Environment & Tool Wrappers</b><br/>NativeCommandError suppression<br/>ANSI escape stripping<br/>dotnet --tl:off injection<br/>BOM-safe file writing<br/>NO_COLOR / TERM=dumb<br/>UTF-8 enforcement"]
+    end
+
+    PASS --> REAL
+
+    style IDE fill:#1a1a2e,stroke:#e94560,color:#eee
+    style SHIM fill:#16213e,stroke:#0f3460,color:#eee
+    style CLS fill:#0f3460,stroke:#53779a,color:#eee
+    style BASH fill:#1a472a,stroke:#2d6a4f,color:#eee
+    style FILE fill:#4a3728,stroke:#8b6914,color:#eee
+    style PASS fill:#16213e,stroke:#0f3460,color:#eee
+    style REAL fill:#1b1b3a,stroke:#6c63ff,color:#eee
+    style L2 fill:#2d2d5e,stroke:#6c63ff,color:#eee
+    style L3 fill:#2d2d5e,stroke:#6c63ff,color:#eee
 ```
 
 ### Layer 1: Compiled C# Shim
