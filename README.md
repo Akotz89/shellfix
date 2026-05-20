@@ -1,4 +1,4 @@
-# wsl-shell-hardening
+# shellfix
 
 **Make Windows PowerShell stop breaking your bash commands.**
 
@@ -11,7 +11,7 @@ A two-layer defense system that lets AI coding agents (and humans) run bash comm
 AI coding agents (Cursor, Windsurf, GitHub Copilot, Antigravity, etc.) run commands through PowerShell on Windows. When they emit bash commands like:
 
 ```bash
-grep -c "def " "C:\Users\Aaron\My Project\app.py"
+grep -c "def " "C:\Users\Me\My Project\app.py"
 awk '{print $1, $3}' data.txt
 find /project -name "*.py" | xargs grep "TODO"
 for i in 1 2 3; do echo "num $i"; done
@@ -33,7 +33,7 @@ This project fixes all of it.
 | `echo "a" && echo "b"` | ❌ PS 5.1 error | ✅ Works |
 | `if [ -f /etc/os-release ]; then...fi` | ❌ PS parse error | ✅ Works |
 | `curl https://example.com` | ❌ Runs `Invoke-WebRequest` | ✅ Runs real curl |
-| `C:\Users\Aaron\My Project\file.py` | ❌ Path not found | ✅ → `/mnt/c/Users/Aaron/My Project/file.py` |
+| `C:\Users\Me\My Project\file.py` | ❌ Path not found | ✅ Auto-translated to `/mnt/c/...` |
 
 ## Architecture
 
@@ -43,7 +43,7 @@ This project fixes all of it.
 └─────────────────────┬────────────────────────────┘
                       │
          ┌────────────▼────────────────┐
-         │  Layer 1: C# Shim (v4)     │
+         │  Layer 1: C# Shim          │
          │  powershell.exe in PATH     │
          │                             │
          │  • Heuristic classifier     │
@@ -75,7 +75,7 @@ A .NET 8 executable named `powershell.exe` placed earlier in PATH than the real 
 1. **Classifies** the command as bash or PowerShell using heuristic analysis
 2. **Escapes** single quotes (`'` → `\'`), dollar signs (`$` → `\$`), and re-quotes glob patterns
 3. **Translates** Windows paths to WSL paths (handles spaces, dots, hyphens)
-4. **Routes** bash to `wsl.exe -d Ubuntu-24.04 -- bash -c` via `.NET ArgumentList` (no shell quoting layer)
+4. **Routes** bash to `wsl.exe -d <distro> -- bash -c` via `.NET ArgumentList` (no shell quoting layer)
 5. **Falls back** to real PowerShell if WSL crashes or is unavailable
 
 ### Layer 2: PowerShell Profile
@@ -92,7 +92,7 @@ Loaded when commands go through real PowerShell. Creates function wrappers for 5
 
 - Windows 10/11 with WSL2
 - A WSL distribution (default: Ubuntu-24.04, configurable)
-- .NET 8 SDK (for building the shim)
+- .NET 8 SDK (for building from source) — or use a [pre-built release](https://github.com/Akotz89/shellfix/releases)
 - PowerShell 5.1+ (comes with Windows)
 
 ## Installation
@@ -100,44 +100,23 @@ Loaded when commands go through real PowerShell. Creates function wrappers for 5
 ### Quick Install
 
 ```powershell
-# Clone
-git clone https://github.com/Akotz89/wsl-shell-hardening.git
-cd wsl-shell-hardening
-
-# Run installer
+git clone https://github.com/Akotz89/shellfix.git
+cd shellfix
 .\install.ps1
 ```
 
-### Manual Install
+### Pre-built Binary
+
+Download from [Releases](https://github.com/Akotz89/shellfix/releases), then:
 
 ```powershell
-# 1. Build the shim
-cd shim
-dotnet publish -c Release -o out
-
-# 2. Create bin directory and add to PATH
-mkdir "$env:USERPROFILE\bin" -ErrorAction SilentlyContinue
-Copy-Item out\powershell.exe "$env:USERPROFILE\bin\powershell.exe"
-
-# 3. Add to PATH (before System32)
-$userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
-if ($userPath -notmatch 'bin') {
-    [Environment]::SetEnvironmentVariable('Path', "$env:USERPROFILE\bin;$userPath", 'User')
-}
-
-# 4. Install the profile
-Copy-Item ..\profile\Microsoft.PowerShell_profile.ps1 `
-    "$env:USERPROFILE\Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1"
+# Extract and run
+.\install.ps1 -SkipBuild
 ```
 
-### Verify Installation
+### Verify
 
 ```powershell
-# Check shim is first
-where.exe powershell.exe
-# Should show: C:\Users\<you>\bin\powershell.exe first
-
-# Run tests
 .\test.ps1
 ```
 
@@ -145,9 +124,10 @@ where.exe powershell.exe
 
 ### WSL Distribution
 
-Edit `shim/PowerShellShim.cs` line 22:
-```csharp
-const string WslDistro = "Ubuntu-24.04";  // Change to your distro
+Pass your distro name during install:
+
+```powershell
+.\install.ps1 -WslDistro "Ubuntu-22.04"
 ```
 
 ### Controls
@@ -156,11 +136,7 @@ const string WslDistro = "Ubuntu-24.04";  // Change to your distro
 |---|---|
 | **Disable shim** | `$env:PWSH_SHIM_BYPASS = "1"` |
 | **Debug mode** | `$env:PWSH_SHIM_DEBUG = "1"` |
-| **Uninstall** | Delete `~\bin\powershell.exe` and remove profile |
-
-### Adding Commands
-
-To add more commands to the profile wrapper list, edit the `$wslCommands` array in the profile.
+| **Uninstall** | `.\install.ps1 -Uninstall` |
 
 ## How It Works
 
@@ -186,52 +162,43 @@ Each layer has different escaping rules. A single `'` in "it's" becomes an unmat
 Windows paths are automatically converted:
 
 ```
-C:\Users\Aaron\My Project\file.py
-  → '/mnt/c/Users/Aaron/My Project/file.py'
-     (single-quoted because it contains spaces)
+C:\Users\Me\My Project\file.py
+  → '/mnt/c/Users/Me/My Project/file.py'
 
-C:\Users\Aaron\code\app.py
-  → /mnt/c/Users/Aaron/code/app.py
-     (no quotes needed)
+C:\Users\Me\code\app.py
+  → /mnt/c/Users/Me/code/app.py
 
-\\wsl.localhost\Ubuntu-24.04\home\aaron\file
-  → /home/aaron/file
+\\wsl.localhost\Ubuntu-24.04\home\me\file
+  → /home/me/file
 ```
 
 ## Testing
 
-Run the included test suite:
-
 ```powershell
-.\test.ps1
+.\test.ps1         # Standard run
+.\test.ps1 -Verbose # Show output details
 ```
 
-This runs 23+ tests covering:
-- Core bash commands with path translation
-- Apostrophes, dollar signs, double quotes, globs
-- Control flow (`for`, `&&`, `if/then/fi`)
-- Pipeline chains (bash→bash, PS→bash, bash→PS)
-- Exit code propagation
-- PowerShell passthrough
-- WSL health checks
+Runs 23+ tests covering bash routing, quoting, pipelines, exit codes, and health checks.
 
 ## FAQ
 
-**Q: Does this work with Cursor/Windsurf/Copilot?**  
-A: Yes. Any tool that calls `powershell -Command "..."` (which is all of them on Windows) will benefit from both layers.
+**Q: Does this work with Cursor / Windsurf / Copilot / Antigravity?**  
+A: Yes. Any tool that calls `powershell -Command "..."` benefits from both layers.
 
-**Q: Will this break my normal PowerShell usage?**  
-A: No. The shim only activates on `-Command` invocations. Interactive PowerShell sessions load the profile, which adds bash wrappers but doesn't remove any PS functionality. The kill switch (`PWSH_SHIM_BYPASS=1`) disables the shim entirely.
+**Q: Will this break my normal PowerShell?**  
+A: No. The shim only activates on `-Command` invocations. Kill switch: `$env:PWSH_SHIM_BYPASS = "1"`.
 
 **Q: What about PowerShell 7 (pwsh)?**  
-A: The shim targets `powershell.exe` (PS 5.1) which is what most IDEs use. If your IDE uses `pwsh.exe`, the profile still works but the shim would need to be renamed.
+A: The shim targets `powershell.exe` (PS 5.1). If your IDE uses `pwsh.exe`, only the profile layer applies.
 
-**Q: Does this work without WSL?**  
-A: No. This project bridges PowerShell to WSL. Without WSL, bash commands will fail (gracefully — the shim falls back to PowerShell).
+**Q: Why not just change the IDE's shell?**  
+A: Most IDE agent frameworks hardcode `powershell -Command` on Windows. There's no setting to change this.
 
-**Q: Why not just change the IDE's terminal to bash?**  
-A: Most IDE agent frameworks hardcode `powershell -Command` on Windows. There's no setting to change this in Cursor, Windsurf, or Antigravity as of 2026.
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 ## License
 
-MIT License. See [LICENSE](LICENSE).
+[MIT](LICENSE)

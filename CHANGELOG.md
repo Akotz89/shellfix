@@ -1,5 +1,7 @@
 # Changelog
 
+All notable changes to this project will be documented in this file.
+
 ## [1.0.0] — 2026-05-20
 
 ### Initial Release
@@ -24,3 +26,9 @@ Two-layer defense system for running bash commands through Windows PowerShell te
 - WSL health check function
 - Shim PATH verification function
 - UTF-8 no-BOM encoding throughout
+
+#### Infrastructure
+- Automated installer with pre-flight checks and uninstall
+- 23+ test suite with shim, profile, and exit code coverage
+- GitHub Actions CI
+- MIT license

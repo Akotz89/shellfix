@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+
+jobs:
+  build:
+    runs-on: windows-latest
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      
+      - name: Build shim
+        run: dotnet publish shim/PowerShellShim.csproj -c Release -o shim/out --nologo
+      
+      - name: Verify build output
+        run: |
+          if (Test-Path "shim/out/powershell.exe") {
+            Write-Host "Build succeeded: shim/out/powershell.exe exists"
+            $size = (Get-Item "shim/out/powershell.exe").Length
+            Write-Host "Size: $([math]::Round($size / 1MB, 2)) MB"
+          } else {
+            Write-Error "Build failed: powershell.exe not found"
+            exit 1
+          }
+        shell: pwsh
+      
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: shellfix-shim
+          path: shim/out/powershell.exe
+          retention-days: 30
