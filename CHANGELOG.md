@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+### Fixed — Shortcut patching quotes and restore path (OPE-116 / #13)
+- Shortcut patching now generates a per-shortcut launcher script instead of embedding IDE paths and existing arguments inside `cmd.exe /C ... && start ...`.
+- Existing shortcut arguments are preserved in the launcher and replayed through `ShellExecute`.
+- `install.ps1 -Uninstall` restores sidecar `.shellfix-backup` files and removes generated launcher scripts.
+- `install.ps1 -TestShortcuts` adds a synthetic patch/launch/restore verification path with spaces, parentheses, ampersands, and quoted arguments.
+
 ## [1.7.0] — 2026-05-20
 
 ### Changed — Profile install is now non-destructive (OPE-110 / #7)
