@@ -2,7 +2,7 @@
 
 ## Trust Model
 
-shellfix intentionally shadows `powershell.exe` in your PATH. This is a powerful and potentially risky operation — you are trusting this project's binary to intercept every PowerShell invocation from your IDE.
+shellfix intentionally shadows `powershell.exe` in your IDE's PATH. This is a sensitive operation: IDE child processes that resolve bare `powershell` will reach the shim before the system PowerShell binary.
 
 ### What shellfix does
 
@@ -43,7 +43,7 @@ else { Write-Host "✗ CHECKSUM MISMATCH — do not use this binary" -Foreground
 
 ### Building from source
 
-For maximum trust, build from source:
+To avoid trusting a pre-built binary, build from source:
 
 ```powershell
 git clone https://github.com/Akotz89/shellfix.git
@@ -75,7 +75,8 @@ Contact: Open a private issue on the repository or reach out via GitHub profile.
 
 | Version | Supported |
 |---|---|
-| 1.6.x | Yes (current) |
+| 1.7.x | Yes (current) |
+| 1.6.x | Yes |
 | 1.5.x | Yes (session proxy, one-shot, profile) |
 | 1.3.x–1.4.x | Partial — one-shot mode only, no session proxy |
 | ≤ 1.2.x | No |

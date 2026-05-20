@@ -31,7 +31,7 @@ cd shellfix
 
 ## The Problem
 
-AI coding agents (Cursor, Windsurf, GitHub Copilot, Antigravity, etc.) run commands through PowerShell on Windows. Three classes of failures occur constantly:
+AI coding agents and terminal-heavy Windows workflows often run commands through PowerShell. Three classes of failures show up repeatedly:
 
 ### Class 1: Bash commands mangled by PowerShell
 ```bash
@@ -55,7 +55,7 @@ npm install                  # writes warnings to stderr → red text
 dotnet build                 # writes diagnostics to stderr → red text
 ```
 
-Agents see red text, think the command failed, and spiral into desperate workarounds — writing Python subprocess scripts, retrying with different escaping, or giving up entirely.
+Agents and automation can misread that output as failure and retry with unnecessary quoting or subprocess workarounds.
 
 **shellfix fixes all three classes.**
 
