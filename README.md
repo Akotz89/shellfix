@@ -50,6 +50,9 @@ Agents see red text, think the command failed, and spiral into desperate workaro
 | `gh release create --notes "..."` | ❌ Quoting breaks PS parser | ✅ -File fallback |
 | `git push origin main` | ❌ Red stderr text | ✅ Clean output |
 | `npm install` | ❌ Warnings shown as errors | ✅ Clean output |
+| `dotnet build` | ❌ Garbled Terminal Logger output | ✅ Auto `--tl:off` |
+| Any command output | ❌ ANSI codes: `[31m` garble | ✅ Stripped clean |
+| `Format-Table` output | ❌ Truncated with `...` | ✅ Full width |
 
 ## Architecture
 
@@ -78,10 +81,13 @@ Agents see red text, think the command failed, and spiral into desperate workaro
                            │• 50+ bash wrappers   │
                            │• Pipeline support    │
                            │• Alias deconfliction │
-                           │• NativeCommandError  │
-                           │  suppression (git,   │
-                           │  npm, gh, dotnet...) │
-                           │• UTF-8 enforcement   │
+                           |• NativeCommandError  |
+                           |  suppression (git,   |
+                           |  npm, gh, dotnet...) |
+                           |• ANSI escape strip   |
+                           |• dotnet --tl:off     |
+                           |• UTF-8 enforcement   |
+                           |• NO_COLOR / TERM=dumb|
                            └──────────────────────┘
 ```
 
@@ -99,9 +105,16 @@ A .NET 8 executable named `powershell.exe` placed earlier in PATH. When the IDE 
 
 Creates function wrappers for 50+ bash commands that handle path translation, quoting, dollar-sign escaping, and pipeline support.
 
-### Layer 3: PowerShell Profile — Native Tool Wrappers
+### Layer 3: PowerShell Profile — Environment & Native Tool Wrappers
 
-Wraps `git`, `npm`, `npx`, `dotnet`, `gh`, `cargo`, `rustc`, `docker`, and `kubectl` in functions that merge stderr to stdout as plain strings. This prevents PS 5.1 from treating normal stderr output as errors (red text), while preserving real exit codes via `$LASTEXITCODE`.
+Wraps `git`, `npm`, `npx`, `dotnet`, `gh`, `cargo`, `rustc`, `docker`, and `kubectl` in functions that:
+
+- Merge stderr to stdout as plain strings (prevents NativeCommandError red text)
+- Strip ANSI escape codes from output (prevents `[31m` garbled text)
+- Inject `--tl:off` for dotnet build/test/run/publish (disables Terminal Logger)
+- Set `NO_COLOR=1` and `TERM=dumb` environment variables
+- Set `$FormatEnumerationLimit = -1` to prevent output truncation
+- Preserve real exit codes via `$LASTEXITCODE`
 
 ## Requirements
 
@@ -190,7 +203,7 @@ C:\Users\Me\code\app.py
 .\test.ps1 -Verbose  # Show output details
 ```
 
-Covers all three failure classes with 25+ tests.
+Covers all three failure classes plus Tier 1 features with 39 tests.
 
 ## FAQ
 

@@ -2,6 +2,37 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.2.0] — 2026-05-20
+
+### Added — Community Pain Point Fixes (Tier 1)
+
+Based on extensive research across Cursor, Windsurf, Copilot, and Reddit forums.
+
+#### ANSI Escape Code Suppression
+- Profile sets `NO_COLOR=1` and `TERM=dumb` to suppress color codes at the source
+- All native tool wrappers now strip remaining ANSI escape sequences via regex
+- Prevents garbled `[31m` text that confuses agents into thinking commands failed
+
+#### dotnet Terminal Logger Auto-Disable
+- `dotnet` wrapper auto-injects `--tl:off` for `build`, `test`, `run`, `publish`, `pack`, `restore`
+- .NET 8+'s Terminal Logger uses ANSI cursor movement that agents can't parse
+- Also sets `DOTNET_NOLOGO=1` and `DOTNET_CLI_TELEMETRY_OPTOUT=1`
+
+#### ExecutionPolicy Auto-Fix
+- Installer checks `ExecutionPolicy` for `CurrentUser` scope
+- Automatically sets to `RemoteSigned` if `Restricted` or `Undefined`
+- Prevents "running scripts is disabled on this system" errors for agent temp scripts
+
+#### Output Truncation Fix
+- Sets `$FormatEnumerationLimit = -1` to prevent `...` truncation in collections
+- Sets `$PSDefaultParameterValues['Format-Table:AutoSize'] = $true` for full-width tables
+- Agents no longer make decisions based on incomplete output
+
+### Test Suite
+- 34 → 39 tests (added ANSI strip, env vars, formatting)
+
+---
+
 ## [1.1.0] — 2026-05-20
 
 ### Added — Two New Failure Classes
