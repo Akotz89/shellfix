@@ -32,6 +32,10 @@ jobs:
             exit 1
           }
         shell: pwsh
+
+      - name: Run functional smoke tests
+        run: .\test-ci-smoke.ps1 -ShimPath .\shim\out\powershell.exe
+        shell: pwsh
       
       - name: Upload artifact
         uses: actions/upload-artifact@v4
