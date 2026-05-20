@@ -64,6 +64,22 @@ try {
     exit 1
 }
 
+# Check ExecutionPolicy
+$policy = Get-ExecutionPolicy -Scope CurrentUser
+if ($policy -eq 'Restricted' -or $policy -eq 'Undefined') {
+    Write-Warn "ExecutionPolicy is '$policy' - agent scripts will be blocked"
+    Write-Step "Setting ExecutionPolicy to RemoteSigned for CurrentUser"
+    try {
+        Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser -Force
+        Write-Ok "ExecutionPolicy set to RemoteSigned"
+    } catch {
+        Write-Warn "Could not set ExecutionPolicy. You may need to run:"
+        Write-Host "  Set-ExecutionPolicy RemoteSigned -Scope CurrentUser"
+    }
+} else {
+    Write-Ok "ExecutionPolicy: $policy"
+}
+
 # Check .NET SDK
 if (-not $SkipBuild) {
     try {

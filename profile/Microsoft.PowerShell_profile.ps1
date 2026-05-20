@@ -11,6 +11,21 @@ $env:PYTHONUTF8 = "1"
 $env:PYTHONIOENCODING = "utf-8"
 $env:WSL_UTF8 = "1"
 
+# --- ANSI / Color Suppression ---
+# AI agents run in non-interactive terminals and can't parse ANSI escape
+# codes (colors, progress bars, spinners). These appear as garbled text
+# like [31m or ←[0m. Suppress them at the source.
+$env:NO_COLOR = "1"              # https://no-color.org — respected by most modern CLIs
+$env:TERM = "dumb"               # tells tools not to emit escape sequences
+$env:DOTNET_NOLOGO = "1"         # suppress .NET welcome banner
+$env:DOTNET_CLI_TELEMETRY_OPTOUT = "1"  # suppress telemetry notice
+
+# --- Output Formatting ---
+# PS default Format-Table truncates columns and limits enum display.
+# Agents see '...' instead of full values and make wrong decisions.
+$FormatEnumerationLimit = -1
+$PSDefaultParameterValues['Format-Table:AutoSize'] = $true
+
 # --- WSLENV: pass common env vars to WSL ---
 # /p = translate as path, /u = pass as-is (unix)
 # Only add vars that agents commonly set/check
@@ -147,11 +162,21 @@ function global:Test-ShimPath {
     return $true
 }
 
-# --- NativeCommandError Suppression ---
+# --- NativeCommandError Suppression + ANSI Stripping ---
 # PS 5.1 treats ANY stderr output from native executables as an error.
 # git, npm, dotnet, gh all write progress/warnings/info to stderr.
 # This makes agents think commands failed when they succeeded.
-# Fix: wrap common tools to merge stderr→stdout as plain strings.
+# Fix: wrap common tools to merge stderr to stdout as plain strings,
+# and strip any remaining ANSI escape codes from the output.
+
+# ANSI escape code regex: matches CSI sequences like \e[31m, \e[0m, etc.
+$global:_shellfix_ansi_regex = [regex]'\x1b\[[0-9;]*[A-Za-z]'
+
+function global:_shellfix_strip_ansi {
+    param([string]$s)
+    return $global:_shellfix_ansi_regex.Replace($s, '')
+}
+
 $nativeTools = @('git', 'npm', 'npx', 'dotnet', 'gh', 'cargo', 'rustc', 'docker', 'kubectl')
 
 foreach ($tool in $nativeTools) {
@@ -159,21 +184,48 @@ foreach ($tool in $nativeTools) {
     $existing = Get-Command $tool -CommandType Application -ErrorAction SilentlyContinue
     if ($existing) {
         $exePath = $existing.Source
-        $sb = [scriptblock]::Create(@"
-            `$oldEAP = `$ErrorActionPreference
-            `$ErrorActionPreference = 'Continue'
-            try {
-                & '$exePath' @args 2>&1 | ForEach-Object {
-                    if (`$_ -is [System.Management.Automation.ErrorRecord]) {
-                        `$_.Exception.Message
-                    } else {
-                        `$_
+        # dotnet gets special treatment: inject --tl:off to disable Terminal Logger
+        # which uses ANSI cursor movement that agents can't parse
+        if ($tool -eq 'dotnet') {
+            $sb = [scriptblock]::Create(@"
+                `$oldEAP = `$ErrorActionPreference
+                `$ErrorActionPreference = 'Continue'
+                try {
+                    # Inject --tl:off if not already present and command is build/test/run/publish
+                    `$injectedArgs = @(`$args)
+                    `$firstArg = if (`$args.Count -gt 0) { `$args[0] } else { '' }
+                    `$tlCommands = @('build', 'test', 'run', 'publish', 'pack', 'restore')
+                    if (`$tlCommands -contains `$firstArg -and `$args -notcontains '--tl:off') {
+                        `$injectedArgs += '--tl:off'
                     }
+                    & '$exePath' @injectedArgs 2>&1 | ForEach-Object {
+                        if (`$_ -is [System.Management.Automation.ErrorRecord]) {
+                            _shellfix_strip_ansi `$_.Exception.Message
+                        } else {
+                            _shellfix_strip_ansi ([string]`$_)
+                        }
+                    }
+                } finally {
+                    `$ErrorActionPreference = `$oldEAP
                 }
-            } finally {
-                `$ErrorActionPreference = `$oldEAP
-            }
 "@)
+        } else {
+            $sb = [scriptblock]::Create(@"
+                `$oldEAP = `$ErrorActionPreference
+                `$ErrorActionPreference = 'Continue'
+                try {
+                    & '$exePath' @args 2>&1 | ForEach-Object {
+                        if (`$_ -is [System.Management.Automation.ErrorRecord]) {
+                            _shellfix_strip_ansi `$_.Exception.Message
+                        } else {
+                            _shellfix_strip_ansi ([string]`$_)
+                        }
+                    }
+                } finally {
+                    `$ErrorActionPreference = `$oldEAP
+                }
+"@)
+        }
         New-Item -Path "function:global:$tool" -Value $sb -Force | Out-Null
     }
 }

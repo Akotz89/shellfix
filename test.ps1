@@ -225,6 +225,28 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 # ================================================================
+# TIER 1: ANSI, dotnet, formatting
+# ================================================================
+Write-Host ""
+Write-Host "--- Tier 1: ANSI Suppression ---"
+Test-Case "NO_COLOR" '$env:NO_COLOR' '1'
+Test-Case "TERM=dumb" '$env:TERM' 'dumb'
+Test-Case "DOTNET_NOLOGO" '$env:DOTNET_NOLOGO' '1'
+
+# Test ANSI stripping function
+$ansiInput = "$([char]27)[31mERROR$([char]27)[0m: something failed"
+$stripped = _shellfix_strip_ansi $ansiInput
+if ($stripped -eq 'ERROR: something failed') {
+    Write-Host "  PASS: ANSI strip function" -ForegroundColor Green; $pass++
+} else {
+    Write-Host "  FAIL: ANSI strip function (got: $stripped)" -ForegroundColor Red; $fail++
+}
+
+Write-Host ""
+Write-Host "--- Tier 1: Output Formatting ---"
+Test-Case "FormatEnumerationLimit" '$FormatEnumerationLimit' '-1'
+
+# ================================================================
 # Infrastructure
 # ================================================================
 Write-Host ""
