@@ -12,7 +12,7 @@ This map keeps GitHub issues, Linear issues, and release/doc state aligned.
 | #10 Release checksums and trust docs | OPE-113 | Closed | Fixed in `v1.7.0`; release workflow emits `checksums.txt` |
 | #11 CI functional smoke tests | OPE-114 | Closed | Fixed in PR #25; CI runs `test-ci-smoke.ps1` |
 | #12 Repo-local test suites | OPE-115 | Closed | Fixed in PR #24; tests default to `shim/out/powershell.exe` |
-| #13 Shortcut patching and launcher quoting | OPE-116 | Open | Pending |
+| #13 Shortcut patching and launcher quoting | OPE-116 | Closed by PR #28 | Fixed in `v1.7.1`; shortcut launcher script and `install.ps1 -TestShortcuts` evidence |
 | #14 README verification and behavior claims | OPE-117 | Closed | Fixed in PR #26; mode-specific verification docs |
 | #15 GitHub repository hygiene | OPE-118 | Closed by PR #27 | PR template, issue templates, label consolidation, maintainer checklist |
 | #16 Continuity reconciliation | OPE-119 | Closed by PR #27 | Tracking map, closeout checklist, reconciliation commands |
