@@ -632,7 +632,10 @@ static int RunInteractiveProxy(string[] originalArgs, bool debug)
     }
 
     var psStdin = process.StandardInput;
-    // Match PS encoding — UTF-8 no BOM
+    // Force UTF-8 no BOM on both sides:
+    // - Our stdin: so Console.ReadLine() decodes BOM as U+FEFF (not 3 CP437 chars)
+    // - Child PS stdin: so we don't inject a new BOM when writing
+    Console.InputEncoding = new System.Text.UTF8Encoding(false);
     psStdin.AutoFlush = true;
 
     // Read lines from our stdin and forward (possibly rewritten) to PS
@@ -640,6 +643,10 @@ static int RunInteractiveProxy(string[] originalArgs, bool debug)
     while ((line = Console.ReadLine()) != null)
     {
         if (process.HasExited) break;
+
+        // Strip UTF-8 BOM (U+FEFF) — IDE stdin encoders may inject
+        // a BOM on the first write, turning "wsl" into "\uFEFFwsl"
+        line = line.TrimStart('\uFEFF');
 
         string rewritten = RewriteForProxy(line, debug);
         psStdin.WriteLine(rewritten);
