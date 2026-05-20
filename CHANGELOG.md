@@ -2,6 +2,56 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.5.2] — 2026-05-20
+
+### Added — IDE Launcher for `run_command` Interception
+
+Discovered that VS Code-based IDEs' agent `run_command` tool spawns bare
+`powershell` (no full path) via Go's `exec.LookPath`, which searches `%PATH%`
+in order. The shim wasn't intercepting because `System32\WindowsPowerShell\v1.0`
+comes before `C:\Users\<user>\bin` in the merged PATH.
+
+#### Shortcut-Based PATH Fix
+- Modified IDE shortcut Target to: `cmd /C set "PATH=C:\Users\<user>\bin;%PATH%" && start "" "<IDE>.exe"`
+- IDE process tree inherits the modified PATH, putting the shim first
+- `run_command` now resolves bare `powershell` to the shim instead of system PS
+- Zero system-wide blast radius — only affects IDE child processes
+- Fully reversible by resetting the shortcut Target
+
+#### Reference Launcher
+- Added `launch-antigravity.bat` — template batch launcher for Antigravity IDE
+- Added `launch-antigravity.vbs` — silent wrapper (no console flash) for taskbar pins
+
+#### Key Research Findings
+- `run_command` is NOT controlled by `agentHostProfile`, `automationProfile`,
+  or `tools.shell.executable` — the Go language server binary hardcodes bare `powershell`
+- No `-NoProfile` is passed — the PowerShell profile loads on every `run_command`
+- IFEO (Image File Execution Options) registry redirect was rejected as too dangerous
+  (system-wide, AV flags it, MITRE ATT&CK T1546.012)
+
+### Tests
+- Added `test-replay.ps1` — 9 tests replaying actual historical session failures
+  (heredocs, python slices, `&&` chains, `curl | python` pipes)
+- Both `test-proxy.ps1` (16 tests) and `test-replay.ps1` (9 tests) pass
+
+---
+
+## [1.5.1] — 2026-05-20
+
+### Fixed — BOM Stripping in Session Proxy
+
+The Antigravity IDE injects a UTF-8 BOM (`EF BB BF`) into stdin when piping
+commands to `run_command`. .NET's `Console.ReadLine()` with default CP437 encoding
+misinterprets this as `ï»¿` (U+FEFF), which gets prepended to the first token of
+every command, breaking detection logic.
+
+#### BOM Fix
+- Set `Console.InputEncoding = new UTF8Encoding(false)` in `RunInteractiveProxy`
+- Added `line.TrimStart('\uFEFF')` to strip any residual BOM character
+- Both fixes are defense-in-depth — either one alone would work
+
+---
+
 ## [1.5.0] — 2026-05-20
 
 ### Added — Session Proxy Mode

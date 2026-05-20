@@ -225,10 +225,12 @@ C:\Users\Me\code\app.py
 ```powershell
 .\test.ps1           # Layer 2+3 tests (44 tests)
 .\test-proxy.ps1     # Session proxy tests (16 tests)
+.\test-replay.ps1    # Historical session replay (9 tests)
 ```
 
 - `test.ps1` covers all failure classes (bash routing, quoting, NativeCommandError) plus Tier 1/2 features
 - `test-proxy.ps1` covers the session proxy mode: `&&`, `[N:-N]`, nested quotes, and pure PS regression
+- `test-replay.ps1` replays actual historical failures from real agent sessions (heredocs, python slices, curl pipes)
 
 ## FAQ
 
@@ -278,6 +280,34 @@ Single-quoted heredoc markers (`<< 'PYEOF'`) pass content verbatim — no escapi
 Since v1.5.0, the shim intercepts **both** one-shot (`-Command`) and interactive (stdin) invocations. When configured as the IDE's terminal shell, it spawns real `powershell.exe` as a child and proxies every stdin line through `RewriteForProxy()`. This means `&&`, `[1:-1]`, and nested quotes in WSL commands are fixed transparently — even when the IDE sends them via `terminal.sendText()` into a persistent session.
 
 For this to work, the IDE must be configured to launch the shim binary as its terminal profile (not the system `powershell.exe`).
+
+### Agent `run_command` Interception (v1.5.2+)
+
+VS Code-based IDEs' agent `run_command` tool bypasses all terminal settings — it spawns bare `powershell` directly from the Go language server binary. The shim is only found if `C:\Users\<user>\bin` comes before `C:\Windows\System32\WindowsPowerShell\v1.0\` in PATH.
+
+**Fix:** Modify the IDE's desktop/Start Menu shortcut to prepend the shim directory:
+
+1. Right-click the shortcut → **Properties**
+2. Change **Target** to:
+   ```
+   C:\Windows\System32\cmd.exe /C set "PATH=C:\Users\<user>\bin;%PATH%" && start "" "C:\path\to\IDE.exe"
+   ```
+3. Set **Run** to **Minimized** (hides the brief cmd flash)
+
+Or use the included launcher scripts:
+```powershell
+# Copy to your bin directory
+copy launch-antigravity.bat $env:USERPROFILE\bin\
+copy launch-antigravity.vbs $env:USERPROFILE\bin\
+```
+
+**How it works:** The IDE process tree inherits the modified PATH. When the language server calls bare `powershell`, Go's `exec.LookPath` finds the shim first. This has zero system-wide blast radius — only IDE child processes are affected.
+
+**Verify it's working:** Run this from the agent:
+```powershell
+(Get-CimInstance Win32_Process -Filter "ProcessId=$PID").CommandLine
+# Should contain: shellfix_*.ps1 (shim's temp file pattern)
+```
 
 
 ## Contributing
