@@ -10,6 +10,10 @@ $OutputEncoding = $utf8NoBom
 $env:PYTHONUTF8 = "1"
 $env:PYTHONIOENCODING = "utf-8"
 $env:WSL_UTF8 = "1"
+if (-not $env:SHELLFIX_WSL_DISTRO) {
+    $env:SHELLFIX_WSL_DISTRO = "Ubuntu-24.04"
+}
+$script:ShellfixWslDistro = $env:SHELLFIX_WSL_DISTRO
 
 # --- ANSI / Color Suppression ---
 # AI agents run in non-interactive terminals and can't parse ANSI escape
@@ -32,6 +36,7 @@ $PSDefaultParameterValues['Format-Table:AutoSize'] = $true
 $wslenvParts = @(
     'PYTHONUTF8/u',
     'PYTHONIOENCODING/u',
+    'SHELLFIX_WSL_DISTRO/u',
     'NODE_ENV/u',
     'CI/u',
     'TERM/u'
@@ -108,8 +113,8 @@ foreach ($cmd in $wslCommands) {
     end {
         `$fc = Build-BashCmd '$cmd' `$args
         `$fc = `$fc -replace '"', '\"'
-        if (`$_piped) { `$_lines | wsl.exe -d Ubuntu-24.04 -- bash -c `$fc }
-        else { wsl.exe -d Ubuntu-24.04 -- bash -c `$fc }
+        if (`$_piped) { `$_lines | wsl.exe -d `$script:ShellfixWslDistro -- bash -c `$fc }
+        else { wsl.exe -d `$script:ShellfixWslDistro -- bash -c `$fc }
     }
 "@)
     New-Item -Path "function:global:$cmd" -Value $sb -Force | Out-Null
@@ -122,14 +127,14 @@ $ExecutionContext.InvokeCommand.CommandNotFoundAction = {
     if ($commandName -match '^Get-(.+)$') { $realName = $Matches[1] }
     if ($realName -match '-' -and $realName -notmatch '^Get-') { return }
     try {
-        $wslResult = wsl.exe -d Ubuntu-24.04 -e which $realName 2>$null
+        $wslResult = wsl.exe -d $script:ShellfixWslDistro -e which $realName 2>$null
         if ($LASTEXITCODE -eq 0 -and $wslResult) {
             $eventArgs.StopSearch = $true
             $cmdToRun = $realName
             $eventArgs.CommandScriptBlock = {
                 $fc = Build-BashCmd $cmdToRun $args
                 $fc = $fc -replace '"', '\"'
-                wsl.exe -d Ubuntu-24.04 -- bash -c $fc
+                wsl.exe -d $script:ShellfixWslDistro -- bash -c $fc
             }.GetNewClosure()
         }
     } catch {}
@@ -139,11 +144,11 @@ $ExecutionContext.InvokeCommand.CommandNotFoundAction = {
 # Quick check that WSL is responsive; warn if not
 function global:Test-WslHealth {
     try {
-        $r = wsl.exe -d Ubuntu-24.04 -e echo ok 2>$null
+        $r = wsl.exe -d $script:ShellfixWslDistro -e echo ok 2>$null
         if ($r -match 'ok') { return $true }
     } catch {}
     Write-Warning "[SHELL] WSL is not responding. Bash commands will fail."
-    Write-Warning "[SHELL] Fix: wsl --shutdown ; wsl -d Ubuntu-24.04"
+    Write-Warning "[SHELL] Fix: wsl --shutdown ; wsl -d $script:ShellfixWslDistro"
     return $false
 }
 

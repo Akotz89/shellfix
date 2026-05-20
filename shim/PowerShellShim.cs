@@ -28,7 +28,7 @@ using System.Text.RegularExpressions;
 
 const string RealPowerShell = @"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe";
 const string WslExe = @"C:\Windows\System32\wsl.exe";
-const string WslDistro = "Ubuntu-24.04";
+const string DefaultWslDistro = "Ubuntu-24.04";
 
 // --- Kill switch ---
 if (Environment.GetEnvironmentVariable("PWSH_SHIM_BYPASS") == "1")
@@ -335,6 +335,8 @@ static int RunProcess(string exe, string[] arguments)
 
 static int RunWslBash(string command, bool debug)
 {
+    string wslDistro = GetWslDistro();
+
     // --- Pre-flight: verify WSL is available ---
     if (!File.Exists(WslExe))
     {
@@ -377,7 +379,7 @@ static int RunWslBash(string command, bool debug)
         UseShellExecute = false,
     };
     startInfo.ArgumentList.Add("-d");
-    startInfo.ArgumentList.Add(WslDistro);
+    startInfo.ArgumentList.Add(wslDistro);
     startInfo.ArgumentList.Add("--");
     startInfo.ArgumentList.Add("bash");
     startInfo.ArgumentList.Add("-c");
@@ -386,7 +388,7 @@ static int RunWslBash(string command, bool debug)
     // Ensure WSL_UTF8 is set in the process environment
     startInfo.Environment["WSL_UTF8"] = "1";
 
-    if (debug) Console.Error.WriteLine($"[SHIM] Running: wsl -d {WslDistro} -- bash -c \"{translated.Substring(0, Math.Min(100, translated.Length))}...\"");
+    if (debug) Console.Error.WriteLine($"[SHIM] Running: wsl -d {wslDistro} -- bash -c \"{translated.Substring(0, Math.Min(100, translated.Length))}...\"");
 
     try
     {
@@ -406,6 +408,13 @@ static int RunWslBash(string command, bool debug)
         Console.Error.WriteLine($"[SHIM] WSL exception: {ex.Message}. Falling back to PowerShell.");
         return RunProcess(RealPowerShell, new[] { "-NoProfile", "-Command", command });
     }
+}
+
+static string GetWslDistro()
+{
+    string? configured = Environment.GetEnvironmentVariable("SHELLFIX_WSL_DISTRO");
+    if (!string.IsNullOrWhiteSpace(configured)) return configured;
+    return DefaultWslDistro;
 }
 
 static string TranslatePaths(string cmd)

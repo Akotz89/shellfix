@@ -202,12 +202,17 @@ Download from [Releases](https://github.com/Akotz89/shellfix/releases), then:
 .\install.ps1 -WslDistro "Ubuntu-22.04"
 ```
 
+The installer stores this as the user environment variable `SHELLFIX_WSL_DISTRO`.
+Both the shim and the PowerShell profile read that same value at runtime, so
+pre-built release binaries do not need to be rebuilt for a different distro.
+
 ### Controls
 
 | Control | How |
 |---|---|
 | **Disable shim** | `$env:PWSH_SHIM_BYPASS = "1"` |
 | **Debug mode** | `$env:PWSH_SHIM_DEBUG = "1"` |
+| **Override WSL distro** | `$env:SHELLFIX_WSL_DISTRO = "Ubuntu-22.04"` |
 | **Uninstall** | `.\install.ps1 -Uninstall` |
 
 ## How It Works
