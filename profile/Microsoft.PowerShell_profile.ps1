@@ -147,4 +147,35 @@ function global:Test-ShimPath {
     return $true
 }
 
+# --- NativeCommandError Suppression ---
+# PS 5.1 treats ANY stderr output from native executables as an error.
+# git, npm, dotnet, gh all write progress/warnings/info to stderr.
+# This makes agents think commands failed when they succeeded.
+# Fix: wrap common tools to merge stderr→stdout as plain strings.
+$nativeTools = @('git', 'npm', 'npx', 'dotnet', 'gh', 'cargo', 'rustc', 'docker', 'kubectl')
+
+foreach ($tool in $nativeTools) {
+    # Only wrap if the tool exists as a real executable (not already a function)
+    $existing = Get-Command $tool -CommandType Application -ErrorAction SilentlyContinue
+    if ($existing) {
+        $exePath = $existing.Source
+        $sb = [scriptblock]::Create(@"
+            `$oldEAP = `$ErrorActionPreference
+            `$ErrorActionPreference = 'Continue'
+            try {
+                & '$exePath' @args 2>&1 | ForEach-Object {
+                    if (`$_ -is [System.Management.Automation.ErrorRecord]) {
+                        `$_.Exception.Message
+                    } else {
+                        `$_
+                    }
+                }
+            } finally {
+                `$ErrorActionPreference = `$oldEAP
+            }
+"@)
+        New-Item -Path "function:global:$tool" -Value $sb -Force | Out-Null
+    }
+}
+
 $env:PS_PROFILE_LOADED = "yes"
