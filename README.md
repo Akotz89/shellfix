@@ -1,6 +1,8 @@
 # shellfix
 
-![Shellfix social preview](assets/shellfix-social-preview.png)
+<p align="center">
+  <img src="assets/shellfix-wordmark.svg" alt="Shellfix - Stop PowerShell from breaking AI agent commands" width="680">
+</p>
 
 [![CI](https://github.com/Akotz89/shellfix/actions/workflows/ci.yml/badge.svg)](https://github.com/Akotz89/shellfix/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
