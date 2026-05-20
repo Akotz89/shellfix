@@ -17,11 +17,11 @@ Shellfix is a Windows command shim for AI coding agents and terminal-heavy devel
 git clone https://github.com/Akotz89/shellfix.git
 cd shellfix
 .\install.ps1    # builds, installs, patches your IDE shortcuts
-.\test.ps1       # verify everything works
+.\test.ps1       # verifies the repo or installed shim
 # Restart your IDE → done
 ```
 
-> **Pre-built binary?** Download from [Releases](https://github.com/Akotz89/shellfix/releases), place all files in one folder, then run `.\install.ps1 -SkipBuild`
+> **Pre-built binary?** Download `powershell.exe`, `install.ps1`, `Microsoft.PowerShell_profile.ps1`, `launch-ide.bat`, and `checksums.txt` from [Releases](https://github.com/Akotz89/shellfix/releases). Place them in one folder, then run `.\install.ps1 -SkipBuild`.
 >
 > **Verify checksums:** `Get-FileHash powershell.exe -Algorithm SHA256` — compare with `checksums.txt` in the release.
 >
@@ -151,7 +151,7 @@ Creates function wrappers for 50+ bash commands that handle path translation, qu
 
 ### Layer 3: PowerShell Profile — Environment & Native Tool Wrappers
 
-Wraps `git`, `npm`, `npx`, `dotnet`, `gh`, `cargo`, `rustc`, `docker`, and `kubectl` in functions that:
+When the shellfix profile is loaded, wraps `git`, `npm`, `npx`, `dotnet`, `gh`, `cargo`, `rustc`, `docker`, and `kubectl` in functions that:
 
 - Merge stderr to stdout as plain strings (prevents NativeCommandError red text)
 - Strip ANSI escape codes from output (prevents `[31m` garbled text)
@@ -180,9 +180,24 @@ cd shellfix
 .\install.ps1
 ```
 
-### Pre-built Binary
+### Pre-Built Release
 
-Download from [Releases](https://github.com/Akotz89/shellfix/releases), then:
+Download these files from a [GitHub Release](https://github.com/Akotz89/shellfix/releases) into the same folder:
+
+- `powershell.exe`
+- `install.ps1`
+- `Microsoft.PowerShell_profile.ps1`
+- `launch-ide.bat`
+- `checksums.txt`
+
+Verify the binary before installing:
+
+```powershell
+Get-FileHash .\powershell.exe -Algorithm SHA256
+# Compare the hash with the powershell.exe line in checksums.txt
+```
+
+Then install without rebuilding:
 
 ```powershell
 .\install.ps1 -SkipBuild
@@ -192,6 +207,12 @@ Download from [Releases](https://github.com/Akotz89/shellfix/releases), then:
 
 ```powershell
 .\test.ps1
+```
+
+For a narrower check that matches CI:
+
+```powershell
+.\test-ci-smoke.ps1 -ShimPath .\shim\out\powershell.exe
 ```
 
 ## Configuration
@@ -251,14 +272,48 @@ C:\Users\Me\code\app.py
 ## Testing
 
 ```powershell
-.\test.ps1           # Layer 2+3 tests (44 tests)
+.\test-ci-smoke.ps1  # CI smoke tests (5 checks)
+.\test.ps1           # Full one-shot/profile suite (48 tests)
 .\test-proxy.ps1     # Session proxy tests (16 tests)
-.\test-replay.ps1    # Historical session replay (9 tests)
+.\test-replay.ps1    # Historical session replay (10 tests)
 ```
 
+- `test-ci-smoke.ps1` covers the stable CI gate: PowerShell passthrough, native tool passthrough policy, explicit WSL, WSL `&&`, and Python slice syntax
 - `test.ps1` covers all failure classes (bash routing, quoting, NativeCommandError) plus Tier 1/2 features
 - `test-proxy.ps1` covers the session proxy mode: `&&`, `[N:-N]`, nested quotes, and pure PS regression
 - `test-replay.ps1` replays actual historical failures from real agent sessions (heredocs, python slices, curl pipes)
+
+### Verifying Runtime Modes
+
+Use these checks after install, especially when debugging an IDE or agent process tree.
+
+**One-shot mode (`powershell -Command`)**
+
+```powershell
+.\test-ci-smoke.ps1 -ShimPath "$env:USERPROFILE\bin\powershell.exe"
+```
+
+Expected: PowerShell passthrough, native passthrough policy, and WSL smoke checks pass. WSL checks skip only if the configured distro is unavailable.
+
+**Session proxy mode (`terminal.sendText` / interactive stdin)**
+
+```powershell
+.\test-proxy.ps1 -ShimPath "$env:USERPROFILE\bin\powershell.exe"
+```
+
+Expected: proxy tests pass for WSL `&&`, Python slice syntax, nested quotes, and normal PowerShell commands.
+
+**`-File` fallback mode**
+
+This path is used only for PowerShell commands that the shim classifies as dangerous for `-Command` quoting. It is not used for normal WSL routing or simple PowerShell passthrough.
+
+```powershell
+$env:PWSH_SHIM_DEBUG = "1"
+& "$env:USERPROFILE\bin\powershell.exe" -NoProfile -Command 'Write-Output "fallback ''quote'' $env:USERNAME"'
+Remove-Item Env:PWSH_SHIM_DEBUG
+```
+
+Expected debug lines include `Dangerous quoting detected, using -File mode` and `Wrote temp script: ...\shellfix_<id>.ps1`, followed by the command output.
 
 ## FAQ
 
@@ -269,13 +324,21 @@ A: Yes. Both one-shot (`-Command`) and interactive (stdin) invocations are handl
 A: No. Kill switch: `$env:PWSH_SHIM_BYPASS = "1"`. Pure PS commands pass through unchanged.
 
 **Q: Why do I still see red text sometimes?**  
-A: Only tools in the wrapper list (`git`, `npm`, `gh`, etc.) are protected. If you find another tool that triggers NativeCommandError, add it to the `$nativeTools` array in the profile.
+A: NativeCommandError cleanup is profile-layer behavior. It applies when the shellfix profile is loaded and only for tools in the wrapper list (`git`, `npm`, `gh`, etc.). Commands launched with `-NoProfile`, or tools outside that list, can still show normal PowerShell stderr behavior.
 
 **Q: What about PowerShell 7?**  
 A: PS 7 fixes `&&`/`||` and NativeCommandError natively. The shim and bash wrappers still provide value for path translation and bash routing.
 
 **Q: Why not just switch to bash/Git Bash?**  
 A: Many IDE agent frameworks default to PowerShell on Windows. The shim lets them work without reconfiguring the agent itself.
+
+## Known Limitations
+
+- The profile-layer fixes require the PowerShell profile to load. If a caller uses `-NoProfile`, the shim still handles routing/classification, but profile functions such as native stderr cleanup, ANSI stripping, and `Write-Utf8NoBom` are not loaded.
+- WSL routing requires the configured distro to exist and be running. Use `.\install.ps1 -WslDistro "<name>"` or set `SHELLFIX_WSL_DISTRO` when the default `Ubuntu-24.04` is not correct.
+- Native tool cleanup is allowlisted. Tools outside `$nativeTools` can still emit stderr or ANSI output until added to the profile wrapper list.
+- Shortcut patching affects the IDE process tree launched from the patched shortcut. Already-running IDE windows and shells launched from other shortcuts may keep their old PATH until restarted.
+- The `shellfix_<id>.ps1` temp-file pattern appears only in debug output for `-File` fallback mode. It is not expected during normal one-shot WSL routing or session proxy rewrites.
 
 ## Known Interactions
 
@@ -347,9 +410,11 @@ launch-ide.bat "C:\path\to\IDE.exe" --your-args-here
 
 **Verify it's working:** Run this from the agent:
 ```powershell
-(Get-CimInstance Win32_Process -Filter "ProcessId=$PID").CommandLine
-# Should contain: shellfix_*.ps1 (shim's temp file pattern)
+(Get-Command powershell.exe).Source
+# Should point to C:\Users\<user>\bin\powershell.exe or your chosen shellfix BinDir
 ```
+
+If that still points to `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`, restart the IDE from the patched shortcut or launch it through `launch-ide.bat`.
 
 **Uninstall:** `.\install.ps1 -Uninstall` restores all shortcuts from backups.
 
