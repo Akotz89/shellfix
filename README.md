@@ -60,31 +60,46 @@ Agents see red text, think the command failed, and spiral into desperate workaro
 
 ```mermaid
 flowchart TD
-    IDE["IDE / Agent calls:<br/><code>powershell -Command '...'</code>"]
-    IDE --> SHIM
+    IDE["IDE / Agent"]
+    IDE --> |"powershell -Command '...'"| ONESHOT
+    IDE --> |"terminal.sendText via stdin"| PROXY
 
-    subgraph SHIM["Layer 1: C# Shim (powershell.exe in PATH)"]
+    subgraph SHIM["Layer 1: C# Shim (powershell.exe)"]
         direction TB
+        ONESHOT["One-Shot Mode"]
+        PROXY["Session Proxy Mode"]
         CLS["Heuristic Classifier"]
+        REWRITE["Stdin Rewriter"]
+        ONESHOT --> CLS
+        PROXY --> REWRITE
         CLS --> |"Bash syntax"| BASH
         CLS --> |"Complex quoting"| FILE
         CLS --> |"Simple PS"| PASS
+        REWRITE --> |"WSL + problematic tokens"| INJECT["Inject --% stop-parsing"]
+        REWRITE --> |"Safe command"| PASSTHRU["Pass through"]
     end
 
     BASH["WSL bash -c<br/>Path translation<br/>Quote/glob escaping<br/>Dollar-sign preservation"]
     FILE["-File fallback<br/>Write temp .ps1<br/>Bypass PS argument parser"]
 
-    subgraph REAL["Real powershell.exe + Profile (Layers 2 & 3)"]
+    subgraph REAL["Real powershell.exe + Profile (Layers 2 and 3)"]
         direction TB
-        L2["<b>Layer 2: Bash Wrappers</b><br/>50+ commands (grep, curl, awk...)<br/>Pipeline support<br/>Alias deconfliction"]
-        L3["<b>Layer 3: Environment & Tool Wrappers</b><br/>NativeCommandError suppression<br/>ANSI escape stripping<br/>dotnet --tl:off injection<br/>BOM-safe file writing<br/>NO_COLOR / TERM=dumb<br/>UTF-8 enforcement"]
+        L2["Layer 2: Bash Wrappers<br/>50+ commands, pipeline support"]
+        L3["Layer 3: Environment and Tool Wrappers<br/>NativeCommandError suppression<br/>ANSI stripping, BOM-safe writes<br/>dotnet --tl:off, UTF-8"]
     end
 
     PASS --> REAL
+    INJECT --> REAL
+    PASSTHRU --> REAL
 
     style IDE fill:#1a1a2e,stroke:#e94560,color:#eee
     style SHIM fill:#16213e,stroke:#0f3460,color:#eee
+    style ONESHOT fill:#0f3460,stroke:#53779a,color:#eee
+    style PROXY fill:#0f3460,stroke:#53779a,color:#eee
     style CLS fill:#0f3460,stroke:#53779a,color:#eee
+    style REWRITE fill:#0f3460,stroke:#53779a,color:#eee
+    style INJECT fill:#1a472a,stroke:#2d6a4f,color:#eee
+    style PASSTHRU fill:#16213e,stroke:#0f3460,color:#eee
     style BASH fill:#1a472a,stroke:#2d6a4f,color:#eee
     style FILE fill:#4a3728,stroke:#8b6914,color:#eee
     style PASS fill:#16213e,stroke:#0f3460,color:#eee
@@ -95,13 +110,17 @@ flowchart TD
 
 ### Layer 1: Compiled C# Shim
 
-A .NET 8 executable named `powershell.exe` placed earlier in PATH. When the IDE calls `powershell -Command "..."`, the shim:
+A .NET 8 executable named `powershell.exe` configured as the IDE's terminal shell. It operates in two modes:
 
-1. **Classifies** the command as bash or PowerShell
-2. For **bash**: escapes quotes, translates paths, re-quotes globs, routes to `wsl.exe -- bash -c` via `.NET ArgumentList`
-3. For **complex PS**: writes to a temp `.ps1` file and runs with `-File` (bypasses argument parser entirely)
-4. For **simple PS**: passes through to real `powershell.exe`
-5. **Falls back** to real PowerShell if WSL crashes
+**One-Shot Mode** (`powershell -Command "..."`): The shim classifies the command:
+1. **Bash syntax** → escapes quotes, translates paths, routes to `wsl.exe -- bash -c`
+2. **Complex PS quoting** → writes to a temp `.ps1` file, runs with `-File` (bypasses parser)
+3. **Simple PS** → passes through to real `powershell.exe`
+4. **Falls back** to real PowerShell if WSL crashes
+
+**Session Proxy Mode** (interactive terminal / `terminal.sendText`): The shim spawns real `powershell.exe` as a child process and proxies stdin line-by-line. Each line is inspected:
+1. If it starts with `wsl`/`wsl.exe` and contains problematic tokens (`&&`, `||`, `[N:-N]`, nested bash quotes) → rewrites with `--%` stop-parsing token
+2. Otherwise → passes through unchanged
 
 ### Layer 2: PowerShell Profile — Bash Wrappers
 
@@ -204,28 +223,29 @@ C:\Users\Me\code\app.py
 ## Testing
 
 ```powershell
-.\test.ps1           # Standard run
-.\test.ps1 -Verbose  # Show output details
+.\test.ps1           # Layer 2+3 tests (44 tests)
+.\test-proxy.ps1     # Session proxy tests (16 tests)
 ```
 
-Covers all failure classes plus Tier 1 and Tier 2 features with 44 tests.
+- `test.ps1` covers all failure classes (bash routing, quoting, NativeCommandError) plus Tier 1/2 features
+- `test-proxy.ps1` covers the session proxy mode: `&&`, `[N:-N]`, nested quotes, and pure PS regression
 
 ## FAQ
 
 **Q: Does this work with Cursor / Windsurf / Copilot / Antigravity?**  
-A: Yes. Any tool that calls `powershell -Command "..."` benefits.
+A: Yes. Both one-shot (`-Command`) and interactive (stdin) invocations are handled. Configure the IDE's terminal profile to point to the shim binary.
 
 **Q: Will this break my normal PowerShell?**  
-A: No. Kill switch: `$env:PWSH_SHIM_BYPASS = "1"`.
+A: No. Kill switch: `$env:PWSH_SHIM_BYPASS = "1"`. Pure PS commands pass through unchanged.
 
 **Q: Why do I still see red text sometimes?**  
 A: Only tools in the wrapper list (`git`, `npm`, `gh`, etc.) are protected. If you find another tool that triggers NativeCommandError, add it to the `$nativeTools` array in the profile.
 
 **Q: What about PowerShell 7?**  
-A: PS 7 fixes the NativeCommandError issue natively. The shim and bash wrappers still provide value for path translation and bash routing.
+A: PS 7 fixes `&&`/`||` and NativeCommandError natively. The shim and bash wrappers still provide value for path translation and bash routing.
 
 **Q: Why not just switch to bash/Git Bash?**  
-A: Most IDE agent frameworks hardcode `powershell -Command` on Windows. There's no setting to change this in Cursor, Windsurf, or Antigravity as of 2026.
+A: Many IDE agent frameworks default to PowerShell on Windows. The shim lets them work without reconfiguring the agent itself.
 
 ## Known Interactions
 
@@ -253,13 +273,11 @@ PYEOF
 
 Single-quoted heredoc markers (`<< 'PYEOF'`) pass content verbatim — no escaping layer applies.
 
-### In-session vs shim-path commands
+### Session Proxy (v1.5.0+)
 
-The shellfix shim only intercepts calls through `powershell.exe -Command "..."`. Commands typed directly into an active PS session (like those from IDE `run_command` tools) are parsed by the running PS instance before any code can intercept them.
+Since v1.5.0, the shim intercepts **both** one-shot (`-Command`) and interactive (stdin) invocations. When configured as the IDE's terminal shell, it spawns real `powershell.exe` as a child and proxies every stdin line through `RewriteForProxy()`. This means `&&`, `[1:-1]`, and nested quotes in WSL commands are fixed transparently — even when the IDE sends them via `terminal.sendText()` into a persistent session.
 
-**What the shim fixes:** `&&`, `[1:-1]`, nested quotes — when routed through the shim binary.
-
-**What requires workarounds in-session:** These same tokens when PS's own parser sees them first. Use the profile's bash wrappers, or write a `.sh` file and run `wsl -- bash /path/to/script.sh`.
+For this to work, the IDE must be configured to launch the shim binary as its terminal profile (not the system `powershell.exe`).
 
 
 ## Contributing

@@ -31,7 +31,7 @@ dotnet publish -c Release -o out
 ```
 shellfix/
 ├── shim/                    # Layer 1: C# shim source
-│   ├── PowerShellShim.cs    #   Classifier, router, escaping
+│   ├── PowerShellShim.cs    #   Classifier, router, proxy, escaping
 │   └── PowerShellShim.csproj
 ├── profile/                 # Layers 2+3: PowerShell profile
 │   └── Microsoft.PowerShell_profile.ps1
@@ -40,7 +40,8 @@ shellfix/
 ├── .github/workflows/       # CI
 │   └── ci.yml
 ├── install.ps1              # Installer with pre-flight checks
-├── test.ps1                 # Three-class test suite
+├── test.ps1                 # Layer 2+3 test suite (44 tests)
+├── test-proxy.ps1           # Session proxy test suite (16 tests)
 ├── README.md
 ├── CONTRIBUTING.md
 ├── CHANGELOG.md

@@ -2,7 +2,44 @@
 
 All notable changes to this project will be documented in this file.
 
-## [1.4.0] — 2026-05-20
+## [1.5.0] — 2026-05-20
+
+### Added — Session Proxy Mode
+
+v1.4.0's one-shot `-Command` interception was never invoked by IDE agents, which
+use `terminal.sendText()` to inject commands into a persistent PS session via
+stdin. v1.5.0 adds a session proxy that actually solves the problem.
+
+#### Session Proxy (`RunInteractiveProxy`)
+- Shim spawns real `powershell.exe` as a child process with stdin redirected
+- Reads each stdin line and inspects it via `RewriteForProxy()`
+- WSL commands containing problematic tokens (`&&`, `||`, `[N:-N]`, nested bash
+  quotes) are rewritten to inject the `--%` stop-parsing token
+- Pure PowerShell commands pass through unchanged
+- `PWSH_SHIM_BYPASS=1` environment variable prevents infinite recursion
+
+#### Problematic Token Detection (`HasProblematicTokens`)
+- `&&` and `||` — PS 5.1 pipeline chain operators
+- `[N:-N]` — PS interprets as array index/slice
+- Nested single quotes inside double quotes in `bash -c` patterns
+
+#### IDE Configuration
+- Added `shellfix` terminal profile to Antigravity IDE `settings.json`
+- Set as `agentHostProfile` so the agent's terminal uses the shim
+
+### Changed
+- Removed unused `LooksLikeBashWithProblematicTokens()` and `EscapeForBashC()`
+  (eliminated CS8321 compiler warnings)
+- Bare-bash rewrite path disabled — too aggressive, caused false positives on
+  PS `echo` commands containing `&&` inside string literals
+
+### Tests
+- New `test-proxy.ps1` — 16 tests covering all three issues plus regression
+- Tests use `Process.Start` + stdin injection to simulate IDE behavior
+
+---
+
+## [1.4.0] — 2026-05-20 *(superseded by 1.5.0)*
 
 ### Fixed — Raw Command Line Extraction (Issues #1, #2, #3)
 

@@ -731,32 +731,3 @@ static bool HasProblematicTokens(string line)
 
     return false;
 }
-
-/// <summary>
-/// Check if a non-WSL line looks like a bash command AND has problematic tokens.
-/// This catches cases where the agent sends bare bash commands like:
-///   grep "pattern" file && echo "found"
-///   python3 -c 'print(x[1:-1])'
-/// </summary>
-static bool LooksLikeBashWithProblematicTokens(string line)
-{
-    if (!HasProblematicTokens(line)) return false;
-    if (!LooksLikeBash(line)) return false;
-
-    // Extra safety: don't rewrite lines that look like they're using
-    // PS-specific features even if they have &&
-    if (line.Contains("$?") || line.Contains("$LASTEXITCODE")) return false;
-
-    return true;
-}
-
-/// <summary>
-/// Escape a bare command string for embedding in bash -c "...".
-/// Escapes double quotes and dollar signs.
-/// </summary>
-static string EscapeForBashC(string cmd)
-{
-    return cmd.Replace("\\", "\\\\")
-              .Replace("\"", "\\\"")
-              .Replace("$", "\\$");
-}
