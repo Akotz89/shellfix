@@ -5,6 +5,7 @@ obj/
 shim/bin/
 shim/out/
 shim/obj/
+shim/publish/
 
 # IDE
 *.user

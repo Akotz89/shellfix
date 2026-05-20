@@ -299,6 +299,33 @@ if ($wh) {
 }
 
 # ================================================================
+# Issue Regression Tests (Shim Layer)
+# These tests invoke the shim binary directly via -UseShim,
+# which reads raw command line and bypasses PS parsing.
+# ================================================================
+Write-Host "`nIssue Regression Tests (Shim):" -ForegroundColor Cyan
+
+# Issue #1: && in wsl bash -c
+Test-Case "Issue #1: && in bash -c" `
+    'wsl -d Ubuntu-24.04 -- bash -c "echo hello && echo world"' `
+    'hello' -UseShim -SkipIfNoShim
+
+# Issue #2: Python [1:-1] slice syntax
+Test-Case "Issue #2: Python slice [1:-1]" `
+    'wsl -d Ubuntu-24.04 -- bash -c "python3 -c ''print(list(range(5))[1:-1])''"' `
+    '\[1.*2.*3\]' -UseShim -SkipIfNoShim
+
+# Issue #3: Nested quotes with JSON pipe to python
+Test-Case "Issue #3: Nested quotes curl/python" `
+    "wsl -d Ubuntu-24.04 -- bash -c ""echo '{""a"":1}' | python3 -c 'import sys,json; print(json.load(sys.stdin)[""a""])'""" `
+    '1' -UseShim -SkipIfNoShim
+
+# Issue #1 variant: multi-command chain
+Test-Case "Issue #1 variant: triple &&" `
+    'wsl -d Ubuntu-24.04 -- bash -c "echo one && echo two && echo three"' `
+    'three' -UseShim -SkipIfNoShim
+
+# ================================================================
 # Cleanup
 # ================================================================
 wsl -e rm -f /tmp/shellfix_test.txt 2>$null

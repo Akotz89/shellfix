@@ -2,6 +2,44 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.4.0] — 2026-05-20
+
+### Fixed — Raw Command Line Extraction (Issues #1, #2, #3)
+
+The shim now reads the **raw command line** from `Environment.CommandLine` instead
+of relying on `args[]` which are pre-tokenized by PowerShell. This means tokens
+like `&&`, `[1:-1]`, and nested single quotes never reach PS's parser.
+
+#### Issue #1: `&&` in `wsl bash -c` (Critical)
+- PowerShell 5.1 rejects `&&` as an invalid statement separator
+- Fix: shim extracts raw `-Command` payload before PS tokenizes it
+- WSL-prefix commands (`wsl -d ... -- bash -c "..."`) now pass through directly
+
+#### Issue #2: Python `[1:-1]` slice syntax
+- PS interprets `[1:-1]` as a malformed array index expression
+- Fix: raw command line extraction bypasses PS bracket parsing
+
+#### Issue #3: Nested single quotes with `curl | python`
+- Multi-layer quoting (PS → bash → curl → Python) caused EOF errors
+- Fix: `ParseCommandArgs()` respects double/single quoted strings in passthrough
+
+#### Issue #4: Heredoc documentation (Docs)
+- Added "Known Interactions" section to README documenting the heredoc pattern
+  for embedding Python/Ruby/Perl in bash scripts created by AI tools
+
+### Added
+- `IsAlreadyWslWrapped()` — detects commands already wrapped in `wsl -d ... --`
+- `RunWslPassthrough()` — passes WSL commands directly without re-wrapping
+- `ParseCommandArgs()` — quote-aware argument parser for raw command strings
+- WSL-prefix early exit in `LooksLikeBash()` classifier
+- 4 new regression test cases for issues #1-#3
+
+### Changed
+- `Environment.CommandLine` is now the primary source for `-Command` extraction
+- `args[]` is kept as fallback for non-standard invocations
+
+---
+
 ## [1.3.0] — 2026-05-20
 
 ### Added — Tier 2 Fixes

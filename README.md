@@ -227,6 +227,41 @@ A: PS 7 fixes the NativeCommandError issue natively. The shim and bash wrappers 
 **Q: Why not just switch to bash/Git Bash?**  
 A: Most IDE agent frameworks hardcode `powershell -Command` on Windows. There's no setting to change this in Cursor, Windsurf, or Antigravity as of 2026.
 
+## Known Interactions
+
+### Embedding Python/Ruby/Perl in bash scripts (Issue #4)
+
+AI agents frequently write bash scripts as workarounds for quoting issues. When these scripts contain inline Python with f-strings, backslash escaping can get mangled by the IDE's file-writing tool.
+
+**Problem:** `write_to_file` may double-escape `\"` inside f-strings:
+```python
+# What the agent writes:
+print(f"\n=== Score: {summary.get(\"score\",0)}% ===\n")
+# What appears in the file:
+print(f"\\n=== Score: {summary.get(\\\"score\\\",0)}% ===\\n")
+```
+
+**Solution:** Use single-quoted heredocs to embed Python in bash scripts:
+```bash
+#!/bin/bash
+python3 - "$@" << 'PYEOF'
+import json, sys
+data = json.load(sys.stdin)
+print(f"\nScore: {data.get('score', 0)}%\n")
+PYEOF
+```
+
+Single-quoted heredoc markers (`<< 'PYEOF'`) pass content verbatim — no escaping layer applies.
+
+### In-session vs shim-path commands
+
+The shellfix shim only intercepts calls through `powershell.exe -Command "..."`. Commands typed directly into an active PS session (like those from IDE `run_command` tools) are parsed by the running PS instance before any code can intercept them.
+
+**What the shim fixes:** `&&`, `[1:-1]`, nested quotes — when routed through the shim binary.
+
+**What requires workarounds in-session:** These same tokens when PS's own parser sees them first. Use the profile's bash wrappers, or write a `.sh` file and run `wsl -- bash /path/to/script.sh`.
+
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md).

@@ -31,24 +31,43 @@ if (Environment.GetEnvironmentVariable("PWSH_SHIM_BYPASS") == "1")
 
 bool debug = Environment.GetEnvironmentVariable("PWSH_SHIM_DEBUG") == "1";
 
-// --- Extract the command string ---
-// IDE calls: powershell -Command "the whole command"
-// We need to find -Command and grab everything after it.
+// --- Extract the command string from RAW command line ---
+// CRITICAL: We must NOT rely on args[] because PowerShell has already
+// tokenized them. Tokens like &&, [1:-1], and nested single quotes
+// cause PS parser errors BEFORE our Main() runs with parsed args.
+// Instead, read the raw command line and extract -Command payload.
 string? commandStr = null;
-var otherArgs = new List<string>();
 bool foundCommand = false;
 
-for (int i = 0; i < args.Length; i++)
+// First try raw command line (bypasses all PS parsing)
+string rawCmdLine = Environment.CommandLine;
+if (debug) Console.Error.WriteLine($"[SHIM] Raw cmdline: {rawCmdLine.Substring(0, Math.Min(200, rawCmdLine.Length))}...");
+
+int cmdIdx = rawCmdLine.IndexOf("-Command", StringComparison.OrdinalIgnoreCase);
+if (cmdIdx >= 0)
 {
-    if (!foundCommand && args[i].Equals("-Command", StringComparison.OrdinalIgnoreCase))
+    foundCommand = true;
+    commandStr = rawCmdLine.Substring(cmdIdx + "-Command".Length).Trim();
+    // Strip outer quotes if the IDE wrapped the whole command in quotes
+    if (commandStr.Length >= 2 && commandStr[0] == '"' && commandStr[commandStr.Length - 1] == '"')
     {
-        foundCommand = true;
-        // Everything after -Command is the command string
-        // It might be one arg (quoted) or multiple args joined
-        commandStr = string.Join(" ", args.Skip(i + 1));
-        break;
+        commandStr = commandStr.Substring(1, commandStr.Length - 2);
     }
-    otherArgs.Add(args[i]);
+    // Unescape \" → " (IDE often escapes inner quotes)
+    commandStr = commandStr.Replace("\\\"", "\"");
+}
+else
+{
+    // Fallback: try args[] for non-standard invocations
+    for (int i = 0; i < args.Length; i++)
+    {
+        if (args[i].Equals("-Command", StringComparison.OrdinalIgnoreCase))
+        {
+            foundCommand = true;
+            commandStr = string.Join(" ", args.Skip(i + 1));
+            break;
+        }
+    }
 }
 
 // If no -Command flag, pass through to real PowerShell
@@ -65,6 +84,13 @@ if (debug) Console.Error.WriteLine($"[SHIM] Classified as {(isBash ? "BASH" : "P
 
 if (isBash)
 {
+    // If command is already wrapped in wsl -d ... --, pass through directly
+    // without re-wrapping in another bash -c layer
+    if (IsAlreadyWslWrapped(commandStr))
+    {
+        if (debug) Console.Error.WriteLine("[SHIM] Already WSL-wrapped, direct passthrough");
+        return RunWslPassthrough(commandStr, debug);
+    }
     // Route to WSL bash
     return RunWslBash(commandStr, debug);
 }
@@ -89,6 +115,13 @@ static bool LooksLikeBash(string cmd)
 {
     cmd = cmd.Trim();
     if (string.IsNullOrEmpty(cmd)) return false;
+
+    // --- HIGHEST PRIORITY: already-wrapped WSL commands ---
+    // If the command starts with wsl/wsl.exe, it's bash-bound by definition.
+    // This catches: wsl -d Ubuntu-24.04 -- bash -c "cmd1 && cmd2"
+    if (cmd.StartsWith("wsl ", StringComparison.OrdinalIgnoreCase) ||
+        cmd.StartsWith("wsl.exe ", StringComparison.OrdinalIgnoreCase))
+        return true;
 
     // Extract the first word/token
     string firstWord = cmd.Split(new[] { ' ', '\t', '\r', '\n' }, 2, StringSplitOptions.RemoveEmptyEntries)[0];
@@ -285,6 +318,15 @@ static int RunWslBash(string command, bool debug)
         return RunProcess(RealPowerShell, new[] { "-NoProfile", "-Command", command });
     }
 
+    // --- Already-wrapped WSL commands: passthrough ---
+    // If the command is already "wsl -d Ubuntu-24.04 -- bash -c '...'",
+    // don't re-wrap it. Parse the existing wsl arguments and pass through.
+    if (IsAlreadyWslWrapped(command))
+    {
+        if (debug) Console.Error.WriteLine("[SHIM] Already WSL-wrapped, passthrough");
+        return RunWslPassthrough(command, debug);
+    }
+
     // Order matters:
     // 1. Escape user-provided single quotes (e.g., grep "it's")
     //    backslash-escape so bash sees \' as a literal quote
@@ -372,4 +414,159 @@ static string TranslatePaths(string cmd)
     });
 
     return result;
+}
+
+// ============================================================
+// WSL passthrough for already-wrapped commands
+// ============================================================
+static bool IsAlreadyWslWrapped(string cmd)
+{
+    // Detect commands that are already wsl -d <distro> -- bash -c "..."
+    // or wsl.exe -d <distro> -- bash -c "..."
+    cmd = cmd.TrimStart();
+    return Regex.IsMatch(cmd, @"^wsl(?:\.exe)?\s+", RegexOptions.IgnoreCase);
+}
+
+static int RunWslPassthrough(string command, bool debug)
+{
+    // Parse the wsl command into arguments, preserving quoted strings.
+    // Input: wsl -d Ubuntu-24.04 -- bash -c "echo hello && echo world"
+    // Output: ["-d", "Ubuntu-24.04", "--", "bash", "-c", "echo hello && echo world"]
+    var wslArgs = ParseCommandArgs(command);
+    
+    // Remove the leading "wsl" or "wsl.exe" token
+    if (wslArgs.Count > 0 && 
+        (wslArgs[0].Equals("wsl", StringComparison.OrdinalIgnoreCase) ||
+         wslArgs[0].Equals("wsl.exe", StringComparison.OrdinalIgnoreCase)))
+    {
+        wslArgs.RemoveAt(0);
+    }
+
+    var startInfo = new ProcessStartInfo
+    {
+        FileName = WslExe,
+        UseShellExecute = false,
+    };
+    foreach (var arg in wslArgs)
+    {
+        startInfo.ArgumentList.Add(arg);
+    }
+    startInfo.Environment["WSL_UTF8"] = "1";
+
+    if (debug)
+    {
+        var preview = string.Join(" ", wslArgs.Select(a => a.Contains(' ') ? $"\"{a}\"" : a));
+        Console.Error.WriteLine($"[SHIM] WSL passthrough: wsl.exe {preview.Substring(0, Math.Min(120, preview.Length))}...");
+    }
+
+    try
+    {
+        using var process = Process.Start(startInfo);
+        if (process is null)
+        {
+            Console.Error.WriteLine("[SHIM] Failed to start WSL passthrough.");
+            return 127;
+        }
+        process.WaitForExit();
+        return process.ExitCode;
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"[SHIM] WSL passthrough exception: {ex.Message}");
+        return 127;
+    }
+}
+
+/// <summary>
+/// Parse a command string into arguments, respecting double-quoted and
+/// single-quoted strings. Handles escaped quotes within double-quoted strings.
+/// </summary>
+static List<string> ParseCommandArgs(string input)
+{
+    var args = new List<string>();
+    int i = 0;
+    while (i < input.Length)
+    {
+        // Skip whitespace
+        while (i < input.Length && char.IsWhiteSpace(input[i])) i++;
+        if (i >= input.Length) break;
+
+        var token = new System.Text.StringBuilder();
+        
+        if (input[i] == '"')
+        {
+            // Double-quoted string: read until matching unescaped "
+            i++; // skip opening "
+            while (i < input.Length)
+            {
+                if (input[i] == '\\' && i + 1 < input.Length && input[i + 1] == '"')
+                {
+                    token.Append('"');
+                    i += 2;
+                }
+                else if (input[i] == '"')
+                {
+                    i++; // skip closing "
+                    break;
+                }
+                else
+                {
+                    token.Append(input[i]);
+                    i++;
+                }
+            }
+        }
+        else if (input[i] == '\'')
+        {
+            // Single-quoted string: read until matching '
+            i++; // skip opening '
+            while (i < input.Length && input[i] != '\'')
+            {
+                token.Append(input[i]);
+                i++;
+            }
+            if (i < input.Length) i++; // skip closing '
+        }
+        else
+        {
+            // Bare word: read until whitespace or quote
+            while (i < input.Length && !char.IsWhiteSpace(input[i]))
+            {
+                // If we hit a quote mid-token, consume the quoted part
+                if (input[i] == '"')
+                {
+                    i++; // skip "
+                    while (i < input.Length)
+                    {
+                        if (input[i] == '\\' && i + 1 < input.Length && input[i + 1] == '"')
+                        {
+                            token.Append('"');
+                            i += 2;
+                        }
+                        else if (input[i] == '"')
+                        {
+                            i++;
+                            break;
+                        }
+                        else
+                        {
+                            token.Append(input[i]);
+                            i++;
+                        }
+                    }
+                }
+                else
+                {
+                    token.Append(input[i]);
+                    i++;
+                }
+            }
+        }
+
+        if (token.Length > 0)
+        {
+            args.Add(token.ToString());
+        }
+    }
+    return args;
 }
