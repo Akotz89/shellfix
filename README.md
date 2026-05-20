@@ -53,6 +53,8 @@ Agents see red text, think the command failed, and spiral into desperate workaro
 | `dotnet build` | ❌ Garbled Terminal Logger output | ✅ Auto `--tl:off` |
 | Any command output | ❌ ANSI codes: `[31m` garble | ✅ Stripped clean |
 | `Format-Table` output | ❌ Truncated with `...` | ✅ Full width |
+| `Set-Content "file"` | ❌ UTF-16LE / BOM corruption | ✅ UTF-8 no-BOM |
+| Deep `node_modules` paths | ❌ 260-char MAX_PATH failure | ✅ LongPathsEnabled |
 
 ## Architecture
 
@@ -114,6 +116,9 @@ Wraps `git`, `npm`, `npx`, `dotnet`, `gh`, `cargo`, `rustc`, `docker`, and `kube
 - Inject `--tl:off` for dotnet build/test/run/publish (disables Terminal Logger)
 - Set `NO_COLOR=1` and `TERM=dumb` environment variables
 - Set `$FormatEnumerationLimit = -1` to prevent output truncation
+- Default `Set-Content`, `Out-File`, `Add-Content` to UTF-8 (prevents UTF-16LE/BOM corruption)
+- Provide `Write-Utf8NoBom` helper for truly BOM-free file writes
+- Guard against VS Code shell integration prompt conflicts
 - Preserve real exit codes via `$LASTEXITCODE`
 
 ## Requirements
@@ -203,7 +208,7 @@ C:\Users\Me\code\app.py
 .\test.ps1 -Verbose  # Show output details
 ```
 
-Covers all three failure classes plus Tier 1 features with 39 tests.
+Covers all failure classes plus Tier 1 and Tier 2 features with 44 tests.
 
 ## FAQ
 

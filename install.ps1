@@ -80,6 +80,23 @@ if ($policy -eq 'Restricted' -or $policy -eq 'Undefined') {
     Write-Ok "ExecutionPolicy: $policy"
 }
 
+# Check LongPathsEnabled (260-char MAX_PATH limit)
+$regPath = 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem'
+$longPaths = Get-ItemProperty -Path $regPath -Name 'LongPathsEnabled' -ErrorAction SilentlyContinue
+if ($longPaths -and $longPaths.LongPathsEnabled -eq 1) {
+    Write-Ok "Long paths enabled (MAX_PATH bypass)"
+} else {
+    Write-Warn "Long paths NOT enabled - deep node_modules will fail"
+    Write-Step "Enabling LongPathsEnabled (requires admin)"
+    try {
+        Set-ItemProperty -Path $regPath -Name 'LongPathsEnabled' -Value 1 -Type DWord -Force
+        Write-Ok "LongPathsEnabled set to 1 (reboot may be required)"
+    } catch {
+        Write-Warn "Could not set LongPathsEnabled (need admin). Run as Administrator:"
+        Write-Host "  Set-ItemProperty -Path '$regPath' -Name 'LongPathsEnabled' -Value 1 -Type DWord"
+    }
+}
+
 # Check .NET SDK
 if (-not $SkipBuild) {
     try {

@@ -2,6 +2,30 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.3.0] — 2026-05-20
+
+### Added — Tier 2 Fixes
+
+#### BOM-Safe File Writing
+- Default `Set-Content`, `Out-File`, `Add-Content` to UTF-8 encoding via `PSDefaultParameterValues`
+- New `Write-Utf8NoBom` helper function for truly BOM-free writes using .NET
+- Prevents UTF-16LE null-byte corruption and unwanted BOM in JSON/YAML/config files
+
+#### Long Path Support
+- Installer checks `HKLM:\...\FileSystem\LongPathsEnabled` registry key
+- Auto-enables if possible (requires admin), warns with manual command if not
+- Fixes "path too long" errors with deep `node_modules` trees
+
+#### Shell Integration Compatibility
+- Profile detects VS Code (`TERM_PROGRAM=vscode`) and avoids redefining the prompt
+- Prevents infinite loops and hangs caused by conflicting prompt functions
+- Sets a minimal prompt outside VS Code that doesn't conflict with IDE markers
+
+### Test Suite
+- 39 → 44 tests (BOM verification, encoding defaults, prompt function, shell compat)
+
+---
+
 ## [1.2.0] — 2026-05-20
 
 ### Added — Community Pain Point Fixes (Tier 1)

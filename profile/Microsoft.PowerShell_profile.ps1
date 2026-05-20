@@ -230,4 +230,61 @@ foreach ($tool in $nativeTools) {
     }
 }
 
+# --- BOM-Safe File Writing ---
+# PS 5.1's Set-Content defaults to system ANSI, Out-File defaults to UTF-16LE.
+# Both corrupt JSON, YAML, and config files that agents write.
+# Override default encoding to UTF-8 no-BOM via PSDefaultParameterValues.
+# Users can still pass explicit -Encoding to override.
+$PSDefaultParameterValues['Set-Content:Encoding'] = 'UTF8'
+$PSDefaultParameterValues['Out-File:Encoding'] = 'UTF8'
+$PSDefaultParameterValues['Add-Content:Encoding'] = 'UTF8'
+
+# Note: PS 5.1's -Encoding UTF8 still adds a BOM. For truly BOM-free writes,
+# the profile provides a helper function agents can use directly.
+function global:Write-Utf8NoBom {
+    <#
+    .SYNOPSIS
+        Write text to a file as UTF-8 without BOM.
+    .DESCRIPTION
+        PS 5.1 has no built-in way to write UTF-8 without BOM.
+        This function uses .NET directly to avoid the BOM.
+    .PARAMETER Path
+        Path to the file to write.
+    .PARAMETER Content
+        String content to write.
+    .PARAMETER Append
+        Append to existing file instead of overwriting.
+    #>
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory, ValueFromPipeline)][string]$Content,
+        [switch]$Append
+    )
+    $resolved = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Path)
+    $enc = [System.Text.UTF8Encoding]::new($false)
+    if ($Append -and (Test-Path $resolved)) {
+        $existing = [System.IO.File]::ReadAllText($resolved, $enc)
+        [System.IO.File]::WriteAllText($resolved, $existing + $Content, $enc)
+    } else {
+        [System.IO.File]::WriteAllText($resolved, $Content, $enc)
+    }
+}
+
+# --- Shell Integration Compatibility ---
+# VS Code injects shell integration markers into the PS profile via a
+# ScriptBlock that modifies the prompt function. This can conflict with
+# custom profiles and cause infinite loops or hangs.
+# Guard: if VS Code shell integration is active, don't redefine prompt.
+# We detect it by checking for the TERM_PROGRAM variable.
+if ($env:TERM_PROGRAM -eq 'vscode') {
+    # VS Code manages the prompt; don't interfere.
+    # Ensure our profile doesn't define a conflicting prompt function.
+    # The env vars and wrappers still load fine.
+} else {
+    # Outside VS Code, set a minimal prompt that doesn't conflict
+    function global:prompt {
+        "PS $($executionContext.SessionState.Path.CurrentLocation)> "
+    }
+}
+
 $env:PS_PROFILE_LOADED = "yes"

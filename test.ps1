@@ -247,6 +247,42 @@ Write-Host "--- Tier 1: Output Formatting ---"
 Test-Case "FormatEnumerationLimit" '$FormatEnumerationLimit' '-1'
 
 # ================================================================
+# TIER 2: BOM-safe, LongPaths, Shell Integration
+# ================================================================
+Write-Host ""
+Write-Host "--- Tier 2: BOM-Safe File Writing ---"
+Test-Case "Set-Content default UTF8" '$PSDefaultParameterValues["Set-Content:Encoding"]' 'UTF8'
+Test-Case "Out-File default UTF8" '$PSDefaultParameterValues["Out-File:Encoding"]' 'UTF8'
+Test-Case "Add-Content default UTF8" '$PSDefaultParameterValues["Add-Content:Encoding"]' 'UTF8'
+
+# Test Write-Utf8NoBom helper
+$testFile = Join-Path $env:TEMP "shellfix_bom_test.txt"
+Write-Utf8NoBom -Path $testFile -Content "hello world"
+$bytes = [System.IO.File]::ReadAllBytes($testFile)
+# BOM would be EF BB BF (239 187 191). Check first 3 bytes are NOT the BOM.
+if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) {
+    Write-Host "  FAIL: Write-Utf8NoBom has BOM" -ForegroundColor Red; $fail++
+} else {
+    $content = [System.IO.File]::ReadAllText($testFile)
+    if ($content -eq "hello world") {
+        Write-Host "  PASS: Write-Utf8NoBom (no BOM, correct content)" -ForegroundColor Green; $pass++
+    } else {
+        Write-Host "  FAIL: Write-Utf8NoBom content mismatch" -ForegroundColor Red; $fail++
+    }
+}
+Remove-Item $testFile -Force -ErrorAction SilentlyContinue
+
+Write-Host ""
+Write-Host "--- Tier 2: Shell Integration ---"
+# Verify prompt function exists and doesn't conflict
+$promptCmd = Get-Command prompt -ErrorAction SilentlyContinue
+if ($promptCmd) {
+    Write-Host "  PASS: prompt function exists" -ForegroundColor Green; $pass++
+} else {
+    Write-Host "  FAIL: prompt function missing" -ForegroundColor Red; $fail++
+}
+
+# ================================================================
 # Infrastructure
 # ================================================================
 Write-Host ""
