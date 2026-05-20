@@ -2,6 +2,41 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.6.0] — 2026-05-20
+
+### Fixed — Critical bugs found in user testing
+
+#### Bug 1: Native dev tools routed to WSL instead of Windows
+`git`, `npm`, `node`, `npx`, `docker`, `kubectl`, `cargo`, `rustc`, `make`,
+`gcc`, `g++` were listed in the shim's `bashCommands` array. This caused:
+- `npm --version` → `bash: npm: command not found`
+- `git status --short` → ran WSL Git, showed entire Windows clone as modified
+
+**Fix:** Removed all Windows-native dev tools from the bash routing list. They
+now pass through to real PowerShell where the profile wraps them with
+NativeCommandError suppression and ANSI stripping.
+
+#### Bug 2: Release packaging doesn't match install instructions
+GitHub Release assets are flat files (`powershell.exe`, `install.ps1`, etc.)
+but `install.ps1 -SkipBuild` expected `shim\out\powershell.exe` repo layout.
+
+**Fix:** Installer now checks both locations — repo layout first, then
+same-directory (flat release download). Clear error message if neither found.
+
+#### Bug 3: Hardcoded user path in profile
+`Test-ShimPath` had `C:\Users\Aaron\bin\powershell.exe` hardcoded.
+
+**Fix:** Replaced with `Join-Path $env:USERPROFILE "bin\powershell.exe"`.
+
+#### Bug 4: Test harness quoting bug (3/48 failures)
+Issue regression tests used `& $shimPath -Command $Command` which causes PS
+to re-parse the command before the shim sees it, mangling quotes and `&&`.
+
+**Fix:** Switched to `Start-Process -ArgumentList` which preserves the raw
+command string.
+
+---
+
 ## [1.5.2] — 2026-05-20
 
 ### Added — IDE Shortcut Patching for `run_command` Interception
