@@ -4,23 +4,24 @@ All notable changes to this project will be documented in this file.
 
 ## [1.5.2] — 2026-05-20
 
-### Added — IDE Launcher for `run_command` Interception
+### Added — IDE Shortcut Patching for `run_command` Interception
 
 Discovered that VS Code-based IDEs' agent `run_command` tool spawns bare
 `powershell` (no full path) via Go's `exec.LookPath`, which searches `%PATH%`
 in order. The shim wasn't intercepting because `System32\WindowsPowerShell\v1.0`
-comes before `C:\Users\<user>\bin` in the merged PATH.
+comes before the user's bin directory in the merged PATH.
 
-#### Shortcut-Based PATH Fix
-- Modified IDE shortcut Target to: `cmd /C set "PATH=C:\Users\<user>\bin;%PATH%" && start "" "<IDE>.exe"`
-- IDE process tree inherits the modified PATH, putting the shim first
-- `run_command` now resolves bare `powershell` to the shim instead of system PS
-- Zero system-wide blast radius — only affects IDE child processes
-- Fully reversible by resetting the shortcut Target
+#### Installer-Driven Shortcut Patching
+- `install.ps1` now auto-detects installed IDEs: VS Code, VS Code Insiders,
+  Cursor, Windsurf, Antigravity IDE
+- Patches desktop and Start Menu shortcuts to prepend the shim directory to PATH
+- Creates `.shellfix-backup` files for each patched shortcut
+- `install.ps1 -Uninstall` restores all shortcuts from backups
+- New `-SkipShortcuts` flag to skip this step if not wanted
 
-#### Reference Launcher
-- Added `launch-antigravity.bat` — template batch launcher for Antigravity IDE
-- Added `launch-antigravity.vbs` — silent wrapper (no console flash) for taskbar pins
+#### Generic Launcher
+- Added `launch-ide.bat` — generic launcher that accepts any IDE exe as argument
+- Removed hardcoded `launch-antigravity.bat/vbs` in favor of the generic approach
 
 #### Key Research Findings
 - `run_command` is NOT controlled by `agentHostProfile`, `automationProfile`,

@@ -283,31 +283,47 @@ For this to work, the IDE must be configured to launch the shim binary as its te
 
 ### Agent `run_command` Interception (v1.5.2+)
 
-VS Code-based IDEs' agent `run_command` tool bypasses all terminal settings — it spawns bare `powershell` directly from the Go language server binary. The shim is only found if `C:\Users\<user>\bin` comes before `C:\Windows\System32\WindowsPowerShell\v1.0\` in PATH.
+VS Code-based IDEs' agent `run_command` tool bypasses all terminal settings — it spawns bare `powershell` directly from the Go language server binary. The shim is only found if the shim directory comes before `C:\Windows\System32\WindowsPowerShell\v1.0\` in PATH.
 
-**Fix:** Modify the IDE's desktop/Start Menu shortcut to prepend the shim directory:
+**Automatic setup** — the installer handles this:
+```powershell
+.\install.ps1
+# Detects VS Code, Cursor, Windsurf, Antigravity IDE
+# Patches shortcuts to prepend shellfix to PATH
+# Creates .shellfix-backup files for easy uninstall
+```
 
-1. Right-click the shortcut → **Properties**
+**Manual setup** — if you prefer:
+
+1. Right-click the IDE shortcut → **Properties**
 2. Change **Target** to:
    ```
    C:\Windows\System32\cmd.exe /C set "PATH=C:\Users\<user>\bin;%PATH%" && start "" "C:\path\to\IDE.exe"
    ```
 3. Set **Run** to **Minimized** (hides the brief cmd flash)
 
-Or use the included launcher scripts:
+Or use the generic `launch-ide.bat`:
 ```powershell
-# Copy to your bin directory
-copy launch-antigravity.bat $env:USERPROFILE\bin\
-copy launch-antigravity.vbs $env:USERPROFILE\bin\
+# Place launch-ide.bat in the same directory as the shim
+launch-ide.bat "C:\path\to\IDE.exe" --your-args-here
 ```
 
 **How it works:** The IDE process tree inherits the modified PATH. When the language server calls bare `powershell`, Go's `exec.LookPath` finds the shim first. This has zero system-wide blast radius — only IDE child processes are affected.
+
+**Supported IDEs:**
+- Visual Studio Code / VS Code Insiders
+- Cursor
+- Windsurf
+- Antigravity IDE
+- Any VS Code-based IDE (manual shortcut patch)
 
 **Verify it's working:** Run this from the agent:
 ```powershell
 (Get-CimInstance Win32_Process -Filter "ProcessId=$PID").CommandLine
 # Should contain: shellfix_*.ps1 (shim's temp file pattern)
 ```
+
+**Uninstall:** `.\install.ps1 -Uninstall` restores all shortcuts from backups.
 
 
 ## Contributing
