@@ -37,14 +37,18 @@ shellfix/
 │   └── Microsoft.PowerShell_profile.ps1
 │       # Layer 2: 50+ bash wrappers
 │       # Layer 3: NativeCommandError suppression
-├── .github/workflows/       # CI
-│   └── ci.yml
-├── install.ps1              # Installer with pre-flight checks
+├── .github/workflows/       # CI + Release automation
+│   ├── ci.yml               #   Build on push/PR
+│   └── release.yml          #   Build + GitHub Release on tag push
+├── install.ps1              # Installer (build, profile, IDE shortcuts)
+├── launch-ide.bat           # Generic IDE launcher (PATH prepend)
 ├── test.ps1                 # Layer 2+3 test suite (44 tests)
 ├── test-proxy.ps1           # Session proxy test suite (16 tests)
+├── test-replay.ps1          # Historical session replay (9 tests)
 ├── README.md
-├── CONTRIBUTING.md
 ├── CHANGELOG.md
+├── CONTRIBUTING.md
+├── SECURITY.md
 └── LICENSE
 ```
 

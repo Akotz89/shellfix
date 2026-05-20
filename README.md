@@ -1,8 +1,25 @@
 # shellfix
 
-**Make Windows PowerShell stop breaking your commands.**
+[![CI](https://github.com/Akotz89/shellfix/actions/workflows/ci.yml/badge.svg)](https://github.com/Akotz89/shellfix/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![.NET 8](https://img.shields.io/badge/.NET-8.0-purple.svg)](https://dotnet.microsoft.com/download/dotnet/8.0)
+[![Windows](https://img.shields.io/badge/Platform-Windows-0078D6.svg)](https://github.com/Akotz89/shellfix)
+
+**Make Windows PowerShell stop breaking your AI agent commands.**
 
 A three-layer defense system that lets AI coding agents (and humans) run commands transparently from Windows PowerShell terminals. Fixes bash quoting nightmares, path translation failures, `$` expansion, and the infamous red `NativeCommandError` text that makes agents think `git push` failed.
+
+### Quick Start
+
+```powershell
+git clone https://github.com/Akotz89/shellfix.git
+cd shellfix
+.\install.ps1    # builds, installs, patches your IDE shortcuts
+.\test.ps1       # verify everything works
+# Restart your IDE → done
+```
+
+> **Pre-built binary?** Download from [Releases](https://github.com/Akotz89/shellfix/releases), then run `.\install.ps1 -SkipBuild`
 
 ---
 
