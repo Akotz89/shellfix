@@ -28,6 +28,7 @@ dotnet publish -c Release -o out
 .\test.ps1 -ShimPath .\shim\out\powershell.exe
 .\test-proxy.ps1 -ShimPath .\shim\out\powershell.exe
 .\test-replay.ps1 -ShimPath .\shim\out\powershell.exe
+.\install.ps1 -TestShortcuts
 ```
 
 ### Project structure

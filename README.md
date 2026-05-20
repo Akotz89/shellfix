@@ -386,18 +386,14 @@ VS Code-based IDEs' agent `run_command` tool bypasses all terminal settings — 
 
 **Manual setup** — if you prefer:
 
-1. Right-click the IDE shortcut → **Properties**
-2. Change **Target** to:
-   ```
-   C:\Windows\System32\cmd.exe /C set "PATH=C:\Users\<user>\bin;%PATH%" && start "" "C:\path\to\IDE.exe"
-   ```
-3. Set **Run** to **Minimized** (hides the brief cmd flash)
+Use the generic `launch-ide.bat`:
 
-Or use the generic `launch-ide.bat`:
 ```powershell
 # Place launch-ide.bat in the same directory as the shim
 launch-ide.bat "C:\path\to\IDE.exe" --your-args-here
 ```
+
+For persistent shortcuts, prefer `.\install.ps1`. It creates a per-shortcut launcher script instead of embedding a fragile `cmd.exe /C ... && start ...` command in the shortcut target.
 
 **How it works:** The IDE process tree inherits the modified PATH. When the language server calls bare `powershell`, Go's `exec.LookPath` finds the shim first. This has zero system-wide blast radius — only IDE child processes are affected.
 
