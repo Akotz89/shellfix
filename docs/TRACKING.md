@@ -18,6 +18,7 @@ This map keeps GitHub issues, Linear issues, and release/doc state aligned.
 | #16 Continuity reconciliation | OPE-119 | Closed by PR #27 | Tracking map, closeout checklist, reconciliation commands |
 | #17 Reduce AI smell | OPE-120 | Closed by PR #27 | Public docs wording pass |
 | #18 Hallucination guardrails | OPE-121 | Closed by PR #27 | Claim evidence inventory and release-note guidance |
+| #29 GitHub Actions runner deprecation notices | OPE-122 | Open | Follow-up from `v1.7.1` release workflow annotations |
 
 ## Manual Reconciliation
 
