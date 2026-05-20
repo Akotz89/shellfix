@@ -12,7 +12,7 @@ A Windows command shim that reduces quoting, WSL routing, stderr, ANSI, UTF-8, a
 
 Use `assets/shellfix-social-preview.png` for LinkedIn posts and GitHub's repository social preview.
 
-Use `assets/shellfix-wordmark.svg` as the compact README/header brand mark. Do not place the full social preview bitmap at the top of the README; it is too large for GitHub's document layout.
+Use `assets/shellfix-wordmark.svg` as the README/header brand mark. It is a full-width SVG banner with only the logo, product name, and tagline so it remains readable in GitHub's README layout. Do not place the full social preview bitmap at the top of the README; it is too large for GitHub's document layout.
 
 GitHub does not expose custom repository social preview image updates through the standard `gh` CLI workflow. To set it manually:
 

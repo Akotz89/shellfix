@@ -1,7 +1,5 @@
-# shellfix
-
 <p align="center">
-  <img src="assets/shellfix-wordmark.svg" alt="Shellfix - Stop PowerShell from breaking AI agent commands" width="680">
+  <img src="assets/shellfix-wordmark.svg" alt="Shellfix - Stop PowerShell from breaking AI agent commands" width="100%">
 </p>
 
 [![CI](https://github.com/Akotz89/shellfix/actions/workflows/ci.yml/badge.svg)](https://github.com/Akotz89/shellfix/actions/workflows/ci.yml)
