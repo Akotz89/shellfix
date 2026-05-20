@@ -18,6 +18,83 @@ function Write-Warn { param($msg) Write-Host "  [!!] $msg" -ForegroundColor Yell
 function Write-Err { param($msg) Write-Host "  [X] $msg" -ForegroundColor Red }
 
 # ================================================================
+# Uninstall
+# ================================================================
+if ($Uninstall) {
+    Write-Step "Uninstalling shellfix"
+
+    $profileDir = "$env:USERPROFILE\Documents\WindowsPowerShell"
+    $profilePath = Join-Path $profileDir "Microsoft.PowerShell_profile.ps1"
+    $snippetPath = Join-Path $profileDir "shellfix_profile.ps1"
+    $beginMarker = "# >>> shellfix >>>"
+    $endMarker   = "# <<< shellfix <<<"
+    $enc = [System.Text.UTF8Encoding]::new($false)
+
+    # Remove guarded block from user profile
+    if (Test-Path $profilePath) {
+        $content = [System.IO.File]::ReadAllText($profilePath, $enc)
+        if ($content.Contains($beginMarker)) {
+            $pattern = "(?s)\r?\n?$([regex]::Escape($beginMarker)).*?$([regex]::Escape($endMarker))\r?\n?"
+            $content = [regex]::Replace($content, $pattern, "`n")
+            $content = $content.Trim() + "`n"
+            [System.IO.File]::WriteAllText($profilePath, $content, $enc)
+            Write-Ok "Removed shellfix block from profile: $profilePath"
+        } else {
+            Write-Warn "No shellfix block found in profile (already clean)"
+        }
+    }
+
+    # Remove snippet file
+    if (Test-Path $snippetPath) {
+        Remove-Item $snippetPath -Force
+        Write-Ok "Removed snippet: $snippetPath"
+    }
+
+    # Remove shim binary
+    $shimExe = Join-Path $BinDir "powershell.exe"
+    $shimPdb = Join-Path $BinDir "powershell.pdb"
+    if (Test-Path $shimExe) {
+        try {
+            Remove-Item $shimExe -Force
+            Write-Ok "Removed shim: $shimExe"
+        } catch {
+            Write-Warn "Could not remove shim (in use?): $shimExe"
+            Write-Warn "Close your IDE and try again, or delete manually."
+        }
+    }
+    if (Test-Path $shimPdb) {
+        Remove-Item $shimPdb -Force -ErrorAction SilentlyContinue
+    }
+
+    # Restore shortcut backups
+    $backupDir = Join-Path $env:USERPROFILE ".shellfix-backup"
+    if (Test-Path $backupDir) {
+        $backups = Get-ChildItem $backupDir -Filter "*.lnk" -ErrorAction SilentlyContinue
+        foreach ($backup in $backups) {
+            # Try to find the original shortcut location
+            $desktopPath = [Environment]::GetFolderPath("Desktop")
+            $startMenuPath = [Environment]::GetFolderPath("Programs")
+            $possibleDests = @(
+                (Join-Path $desktopPath $backup.Name),
+                (Join-Path $startMenuPath $backup.Name)
+            )
+            foreach ($dest in $possibleDests) {
+                if (Test-Path $dest) {
+                    Copy-Item $backup.FullName $dest -Force
+                    Write-Ok "Restored shortcut backup: $($backup.Name)"
+                    break
+                }
+            }
+        }
+        Write-Ok "Shortcut backups preserved in: $backupDir"
+    }
+
+    Write-Host ""
+    Write-Host "  shellfix uninstalled. Restart your IDE to take effect." -ForegroundColor Green
+    exit 0
+}
+
+# ================================================================
 # IDE Definitions — add new IDEs here
 # ================================================================
 $KnownIDEs = @(
@@ -345,16 +422,20 @@ if ($userPath -notmatch [regex]::Escape($BinDir)) {
 }
 
 # ================================================================
-# Install profile
+# Install profile (non-destructive — preserves existing user profile)
 # ================================================================
 if (-not $SkipProfile) {
     Write-Step "Installing PowerShell profile"
 
     $profileDir = "$env:USERPROFILE\Documents\WindowsPowerShell"
     $profilePath = Join-Path $profileDir "Microsoft.PowerShell_profile.ps1"
-    # Check two possible locations for the source profile:
-    #   1. profile/Microsoft.PowerShell_profile.ps1 (repo layout)
-    #   2. Microsoft.PowerShell_profile.ps1 in same directory (release download)
+    $snippetPath = Join-Path $profileDir "shellfix_profile.ps1"
+
+    # --- Sentinel markers for the guarded block ---
+    $beginMarker = "# >>> shellfix >>>"
+    $endMarker   = "# <<< shellfix <<<"
+
+    # --- Locate the shellfix profile source ---
     $sourceProfile = Join-Path $PSScriptRoot "profile\Microsoft.PowerShell_profile.ps1"
     if (-not (Test-Path $sourceProfile)) {
         $sourceProfile = Join-Path $PSScriptRoot "Microsoft.PowerShell_profile.ps1"
@@ -363,23 +444,50 @@ if (-not $SkipProfile) {
         Write-Warn "Profile source not found. Skipping profile installation."
         Write-Warn "Place Microsoft.PowerShell_profile.ps1 next to install.ps1 or clone the full repo."
     } else {
+        # Ensure profile directory exists
+        if (-not (Test-Path $profileDir)) {
+            New-Item -Path $profileDir -ItemType Directory -Force | Out-Null
+        }
 
-    # Update distro name in profile if not default
-    if ($WslDistro -ne "Ubuntu-24.04") {
-        $content = Get-Content $sourceProfile -Raw
-        $content = $content -replace 'Ubuntu-24.04', $WslDistro
-        if (-not (Test-Path $profileDir)) {
-            New-Item -Path $profileDir -ItemType Directory -Force | Out-Null
+        # --- Install shellfix snippet file ---
+        $snippetContent = Get-Content $sourceProfile -Raw
+        if ($WslDistro -ne "Ubuntu-24.04") {
+            $snippetContent = $snippetContent -replace 'Ubuntu-24.04', $WslDistro
         }
-        [System.IO.File]::WriteAllText($profilePath, $content, [System.Text.UTF8Encoding]::new($false))
-    } else {
-        if (-not (Test-Path $profileDir)) {
-            New-Item -Path $profileDir -ItemType Directory -Force | Out-Null
+        $enc = [System.Text.UTF8Encoding]::new($false)
+        [System.IO.File]::WriteAllText($snippetPath, $snippetContent, $enc)
+        Write-Ok "Snippet installed: $snippetPath"
+
+        # --- Inject guarded dot-source block into user profile ---
+        $dotSourceBlock = @"
+
+$beginMarker
+# shellfix — do not edit this block manually. Managed by install.ps1.
+# To remove: run .\install.ps1 -Uninstall, or delete this block and $snippetPath
+if (Test-Path '$snippetPath') { . '$snippetPath' }
+$endMarker
+"@
+
+        if (Test-Path $profilePath) {
+            $existingProfile = [System.IO.File]::ReadAllText($profilePath, $enc)
+            if ($existingProfile.Contains($beginMarker)) {
+                # Already present — replace in place (idempotent reinstall)
+                $pattern = "(?s)$([regex]::Escape($beginMarker)).*?$([regex]::Escape($endMarker))"
+                $existingProfile = [regex]::Replace($existingProfile, $pattern, $dotSourceBlock.TrimStart())
+                [System.IO.File]::WriteAllText($profilePath, $existingProfile, $enc)
+                Write-Ok "Profile updated (idempotent reinstall): $profilePath"
+            } else {
+                # Append — preserve existing user content
+                $existingProfile = $existingProfile.TrimEnd() + "`n" + $dotSourceBlock + "`n"
+                [System.IO.File]::WriteAllText($profilePath, $existingProfile, $enc)
+                Write-Ok "Profile appended (existing content preserved): $profilePath"
+            }
+        } else {
+            # No existing profile — create with just the block
+            [System.IO.File]::WriteAllText($profilePath, $dotSourceBlock.TrimStart() + "`n", $enc)
+            Write-Ok "Profile created: $profilePath"
         }
-        Copy-Item $sourceProfile $profilePath -Force
     }
-    Write-Ok "Profile installed: $profilePath"
-    } # end else (profile found)
 }
 
 # ================================================================

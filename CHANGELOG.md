@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.7.0] — 2026-05-20
+
+### Changed — Profile install is now non-destructive (OPE-110 / #7)
+- Installer no longer overwrites the user's PowerShell profile
+- shellfix profile is installed as a separate `shellfix_profile.ps1` snippet
+- A guarded dot-source block (`# >>> shellfix >>>`) is injected into the user profile
+- Reinstall is idempotent — the block is detected and replaced in place
+- Full `-Uninstall` support: removes the block, deletes snippet, removes shim, restores shortcuts
+
+### Added — Release checksums and trust documentation (OPE-113 / #10)
+- Release workflow generates `checksums.txt` with SHA256 hashes for all assets
+- SECURITY.md rewritten with comprehensive trust model documentation:
+  - PATH-shadowing risk explanation
+  - Checksum verification steps (PowerShell commands)
+  - Build-from-source instructions
+  - Code-signing roadmap
+- README updated with verification and uninstall instructions
+
+---
+
 ## [1.6.0] — 2026-05-20
 
 ### Fixed — Critical bugs found in user testing

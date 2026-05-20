@@ -43,6 +43,25 @@ jobs:
         run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
         shell: bash
 
+      - name: Generate SHA256 checksums
+        run: |
+          $assets = @(
+            "shim/publish/powershell.exe",
+            "install.ps1",
+            "profile/Microsoft.PowerShell_profile.ps1",
+            "launch-ide.bat"
+          )
+          $checksums = @()
+          foreach ($file in $assets) {
+            $hash = (Get-FileHash $file -Algorithm SHA256).Hash.ToLower()
+            $name = Split-Path $file -Leaf
+            $checksums += "$hash  $name"
+          }
+          $checksums | Out-File -FilePath checksums.txt -Encoding utf8NoBOM
+          Write-Host "Generated checksums:"
+          Get-Content checksums.txt
+        shell: pwsh
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -53,3 +72,4 @@ jobs:
             install.ps1
             profile/Microsoft.PowerShell_profile.ps1
             launch-ide.bat
+            checksums.txt

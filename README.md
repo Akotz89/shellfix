@@ -19,7 +19,11 @@ cd shellfix
 # Restart your IDE → done
 ```
 
-> **Pre-built binary?** Download from [Releases](https://github.com/Akotz89/shellfix/releases), then run `.\install.ps1 -SkipBuild`
+> **Pre-built binary?** Download from [Releases](https://github.com/Akotz89/shellfix/releases), place all files in one folder, then run `.\install.ps1 -SkipBuild`
+>
+> **Verify checksums:** `Get-FileHash powershell.exe -Algorithm SHA256` — compare with `checksums.txt` in the release.
+>
+> **Uninstall:** `.\install.ps1 -Uninstall` removes the shim, profile snippet, and restores IDE shortcuts.
 
 ---
 
