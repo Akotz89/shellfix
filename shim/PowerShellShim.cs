@@ -68,7 +68,15 @@ if (isBash)
 }
 else
 {
-    // Pass through to real PowerShell
+    // PS command — check if the command string has quoting that will
+    // break PowerShell's -Command parser (mixed quotes, multi-line,
+    // unmatched single quotes, embedded backticks in strings, etc.)
+    if (HasDangerousQuoting(commandStr))
+    {
+        if (debug) Console.Error.WriteLine("[SHIM] Dangerous quoting detected, using -File mode");
+        return RunPsViaFile(commandStr, debug);
+    }
+    // Simple PS command — pass through directly
     return RunProcess(RealPowerShell, args);
 }
 
@@ -163,8 +171,87 @@ static bool LooksLikeBash(string cmd)
 }
 
 // ============================================================
+// Quoting danger detector
+// ============================================================
+static bool HasDangerousQuoting(string cmd)
+{
+    // Multi-line commands are almost always dangerous
+    if (cmd.Contains('\n') || cmd.Contains('\r'))
+        return true;
+    
+    // Count unescaped single quotes — odd number = unbalanced
+    int singleQuotes = 0;
+    for (int i = 0; i < cmd.Length; i++)
+    {
+        if (cmd[i] == '\'' && (i == 0 || cmd[i-1] != '`'))
+            singleQuotes++;
+    }
+    if (singleQuotes % 2 != 0)
+        return true;
+    
+    // Mixed quoting patterns that confuse PS 5.1:
+    // Double-quoted string containing single quotes with special chars nearby
+    // e.g., --notes "text with 'quotes' and $vars and `backticks`"
+    bool hasDouble = cmd.Contains('"');
+    bool hasSingle = cmd.Contains('\'');
+    bool hasBacktick = cmd.Contains('`');
+    bool hasDollar = cmd.Contains('$');
+    
+    // Three or more quote types mixed = danger zone
+    int quoteTypes = (hasDouble ? 1 : 0) + (hasSingle ? 1 : 0) + (hasBacktick ? 1 : 0) + (hasDollar ? 1 : 0);
+    if (quoteTypes >= 3)
+        return true;
+    
+    // Very long commands with any quotes tend to have issues
+    if (cmd.Length > 500 && (hasSingle || hasBacktick))
+        return true;
+    
+    return false;
+}
+
+// ============================================================
 // Process launchers
 // ============================================================
+static int RunPsViaFile(string command, bool debug)
+{
+    // Write the command to a temp .ps1 file and run with -File.
+    // -File bypasses PowerShell's command-line argument parser entirely —
+    // the file content is read as-is, no quote interpretation.
+    string tempFile = Path.Combine(Path.GetTempPath(), $"shellfix_{Guid.NewGuid():N}.ps1");
+    
+    try
+    {
+        File.WriteAllText(tempFile, command, new System.Text.UTF8Encoding(false));
+        
+        if (debug) Console.Error.WriteLine($"[SHIM] Wrote temp script: {tempFile}");
+        
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = RealPowerShell,
+            UseShellExecute = false,
+        };
+        startInfo.ArgumentList.Add("-NoProfile");
+        startInfo.ArgumentList.Add("-ExecutionPolicy");
+        startInfo.ArgumentList.Add("Bypass");
+        startInfo.ArgumentList.Add("-File");
+        startInfo.ArgumentList.Add(tempFile);
+        
+        using var process = Process.Start(startInfo);
+        if (process is null)
+        {
+            Console.Error.WriteLine("[SHIM] Failed to start PowerShell via -File");
+            return 127;
+        }
+        process.WaitForExit();
+        return process.ExitCode;
+    }
+    finally
+    {
+        // Clean up temp file
+        try { File.Delete(tempFile); } catch { }
+    }
+}
+
 static int RunProcess(string exe, string[] arguments)
 {
     var startInfo = new ProcessStartInfo
