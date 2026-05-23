@@ -118,16 +118,16 @@ if (isBash)
 }
 else
 {
-    // PS command — check if the command string has quoting that will
-    // break PowerShell's -Command parser (mixed quotes, multi-line,
-    // unmatched single quotes, embedded backticks in strings, etc.)
-    if (HasDangerousQuoting(commandStr))
+    // ALL PS commands route through -File mode unconditionally.
+    // This eliminates the entire class of quoting/escaping failures:
+    // -File reads script content as-is with no quote interpretation.
+    // HasDangerousQuoting is kept for debug logging but not gating.
+    if (debug)
     {
-        if (debug) Console.Error.WriteLine("[SHIM] Dangerous quoting detected, using -File mode");
-        return RunPsViaFile(commandStr, debug);
+        bool dangerous = HasDangerousQuoting(commandStr);
+        Console.Error.WriteLine($"[SHIM] PS via -File (dangerous={dangerous})");
     }
-    // Simple PS command — pass through directly
-    return RunProcess(RealPowerShell, args);
+    return RunPsViaFile(commandStr, debug);
 }
 
 // ============================================================
@@ -295,7 +295,24 @@ static int RunPsViaFile(string command, bool debug)
     
     try
     {
-        File.WriteAllText(tempFile, command, new System.Text.UTF8Encoding(false));
+        // Build the script content:
+        // 1. Dot-source the shellfix profile so wrappers (grep, git stderr
+        //    suppression, encoding fixes) are available in -File mode.
+        // 2. Run the user's command.
+        // 3. Propagate $LASTEXITCODE so the agent sees the real exit code
+        //    from native executables, not PowerShell's own exit code.
+        var sb = new System.Text.StringBuilder();
+        string profilePath = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
+            @"WindowsPowerShell\shellfix_profile.ps1");
+        if (File.Exists(profilePath))
+        {
+            sb.AppendLine($". '{profilePath}'");
+        }
+        sb.AppendLine(command);
+        sb.AppendLine("exit $LASTEXITCODE");
+        
+        File.WriteAllText(tempFile, sb.ToString(), new System.Text.UTF8Encoding(false));
         
         if (debug) Console.Error.WriteLine($"[SHIM] Wrote temp script: {tempFile}");
         
@@ -304,7 +321,6 @@ static int RunPsViaFile(string command, bool debug)
             FileName = RealPowerShell,
             UseShellExecute = false,
         };
-        startInfo.ArgumentList.Add("-NoProfile");
         startInfo.ArgumentList.Add("-ExecutionPolicy");
         startInfo.ArgumentList.Add("Bypass");
         startInfo.ArgumentList.Add("-File");
