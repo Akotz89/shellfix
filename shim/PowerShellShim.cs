@@ -38,6 +38,9 @@ if (Environment.GetEnvironmentVariable("PWSH_SHIM_BYPASS") == "1")
 
 bool debug = Environment.GetEnvironmentVariable("PWSH_SHIM_DEBUG") == "1";
 
+// --- Breadcrumb: signal to the profile that the shim is active ---
+Environment.SetEnvironmentVariable("SHELLFIX_ACTIVE", "1");
+
 // --- Extract the command string from RAW command line ---
 // CRITICAL: We must NOT rely on args[] because PowerShell has already
 // tokenized them. Tokens like &&, [1:-1], and nested single quotes

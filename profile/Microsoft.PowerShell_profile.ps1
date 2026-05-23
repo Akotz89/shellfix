@@ -293,3 +293,16 @@ if ($env:TERM_PROGRAM -eq 'vscode') {
 }
 
 $env:PS_PROFILE_LOADED = "yes"
+
+# --- Shim Activation Watchdog ---
+# Warn if the profile loaded but the shim is not active. This happens
+# when the IDE was launched from an unpatched shortcut (e.g., after an
+# IDE update replaced the shortcuts). The profile still works for
+# interactive terminals, but run_command escaping protection is OFF.
+if (-not $env:SHELLFIX_ACTIVE) {
+    $shimPath = Join-Path $env:USERPROFILE "bin\powershell.exe"
+    if (Test-Path $shimPath) {
+        Write-Warning "[SHELLFIX] Shim not active. Escaping protection is OFF."
+        Write-Warning "[SHELLFIX] Re-run install.ps1 to patch IDE shortcuts."
+    }
+}
