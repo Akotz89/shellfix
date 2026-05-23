@@ -96,22 +96,21 @@ flowchart TD
         ONESHOT --> CLS
         PROXY --> REWRITE
         CLS --> |"Bash syntax"| BASH
-        CLS --> |"Complex quoting"| FILE
-        CLS --> |"Simple PS"| PASS
+        CLS --> |"PowerShell"| FILE
         REWRITE --> |"WSL + problematic tokens"| INJECT["Inject --% stop-parsing"]
         REWRITE --> |"Safe command"| PASSTHRU["Pass through"]
     end
 
     BASH["WSL bash -c<br/>Path translation<br/>Quote/glob escaping<br/>Dollar-sign preservation"]
-    FILE["-File fallback<br/>Write temp .ps1<br/>Bypass PS argument parser"]
+    FILE["-File mode<br/>Write temp .ps1<br/>Dot-source profile<br/>exit $LASTEXITCODE"]
 
-    subgraph REAL["Real powershell.exe + Profile (Layers 2 and 3)"]
+    subgraph REAL["pwsh 7 (preferred) or PS 5.1 + Profile"]
         direction TB
         L2["Layer 2: Bash Wrappers<br/>50+ commands, pipeline support"]
         L3["Layer 3: Environment and Tool Wrappers<br/>NativeCommandError suppression<br/>ANSI stripping, BOM-safe writes<br/>dotnet --tl:off, UTF-8"]
     end
 
-    PASS --> REAL
+    FILE --> REAL
     INJECT --> REAL
     PASSTHRU --> REAL
 
@@ -125,7 +124,6 @@ flowchart TD
     style PASSTHRU fill:#16213e,stroke:#0f3460,color:#eee
     style BASH fill:#1a472a,stroke:#2d6a4f,color:#eee
     style FILE fill:#4a3728,stroke:#8b6914,color:#eee
-    style PASS fill:#16213e,stroke:#0f3460,color:#eee
     style REAL fill:#1b1b3a,stroke:#6c63ff,color:#eee
     style L2 fill:#2d2d5e,stroke:#6c63ff,color:#eee
     style L3 fill:#2d2d5e,stroke:#6c63ff,color:#eee
@@ -133,15 +131,16 @@ flowchart TD
 
 ### Layer 1: Compiled C# Shim
 
-A .NET 8 executable named `powershell.exe` configured as the IDE's terminal shell. It operates in two modes:
+A .NET 8 executable named `powershell.exe` configured as the IDE's terminal shell. It prefers **PowerShell 7** (`pwsh.exe`) as its backend when available, falling back to PS 5.1 automatically. It operates in two modes:
 
 **One-Shot Mode** (`powershell -Command "..."`): The shim classifies the command:
 1. **Bash syntax** → escapes quotes, translates paths, routes to `wsl.exe -- bash -c`
-2. **Complex PS quoting** → writes to a temp `.ps1` file, runs with `-File` (bypasses parser)
-3. **Simple PS** → passes through to real `powershell.exe`
-4. **Falls back** to real PowerShell if WSL crashes
+2. **PowerShell** → writes to a temp `.ps1` file with profile dot-source and `exit $LASTEXITCODE`, runs with `-File` (bypasses parser entirely)
+3. **Falls back** to real PowerShell if WSL crashes
 
-**Session Proxy Mode** (interactive terminal / `terminal.sendText`): The shim spawns real `powershell.exe` as a child process and proxies stdin line-by-line. Each line is inspected:
+All PS commands go through `-File` mode unconditionally. This eliminates the entire class of quoting and escaping failures — the `.ps1` file content is read as-is with no quote interpretation.
+
+**Session Proxy Mode** (interactive terminal / `terminal.sendText`): The shim spawns the PowerShell backend as a child process and proxies stdin line-by-line. Each line is inspected:
 1. If it starts with `wsl`/`wsl.exe` and contains problematic tokens (`&&`, `||`, `[N:-N]`, nested bash quotes) → rewrites with `--%` stop-parsing token
 2. Otherwise → passes through unchanged
 
@@ -232,7 +231,9 @@ pre-built release binaries do not need to be rebuilt for a different distro.
 | Control | How |
 |---|---|
 | **Disable shim** | `$env:PWSH_SHIM_BYPASS = "1"` |
+| **Force PS 5.1 backend** | `$env:SHELLFIX_FORCE_PS5 = "1"` |
 | **Debug mode** | `$env:PWSH_SHIM_DEBUG = "1"` |
+| **Command logging** | `$env:SHELLFIX_LOG = "1"` (logs to `%TEMP%\shellfix_commands.log`) |
 | **Override WSL distro** | `$env:SHELLFIX_WSL_DISTRO = "Ubuntu-22.04"` |
 | **Uninstall** | `.\install.ps1 -Uninstall` |
 
@@ -303,17 +304,17 @@ Expected: PowerShell passthrough, native passthrough policy, and WSL smoke check
 
 Expected: proxy tests pass for WSL `&&`, Python slice syntax, nested quotes, and normal PowerShell commands.
 
-**`-File` fallback mode**
+**`-File` mode (all PS commands)**
 
-This path is used only for PowerShell commands that the shim classifies as dangerous for `-Command` quoting. It is not used for normal WSL routing or simple PowerShell passthrough.
+All PowerShell commands are routed through `-File` mode. The temp `.ps1` file includes a profile dot-source and `exit $LASTEXITCODE`.
 
 ```powershell
 $env:PWSH_SHIM_DEBUG = "1"
-& "$env:USERPROFILE\bin\powershell.exe" -NoProfile -Command 'Write-Output "fallback ''quote'' $env:USERNAME"'
+& "$env:USERPROFILE\bin\powershell.exe" -NoProfile -Command 'Write-Output "hello from -File mode"'
 Remove-Item Env:PWSH_SHIM_DEBUG
 ```
 
-Expected debug lines include `Dangerous quoting detected, using -File mode` and `Wrote temp script: ...\shellfix_<id>.ps1`, followed by the command output.
+Expected debug lines include `PS via -File` and `Wrote temp script: ...\shellfix_<id>.ps1`, followed by the command output.
 
 ## FAQ
 
@@ -327,18 +328,18 @@ A: No. Kill switch: `$env:PWSH_SHIM_BYPASS = "1"`. Pure PS commands pass through
 A: NativeCommandError cleanup is profile-layer behavior. It applies when the shellfix profile is loaded and only for tools in the wrapper list (`git`, `npm`, `gh`, etc.). Commands launched with `-NoProfile`, or tools outside that list, can still show normal PowerShell stderr behavior.
 
 **Q: What about PowerShell 7?**  
-A: PS 7 fixes `&&`/`||` and NativeCommandError natively. The shim and bash wrappers still provide value for path translation and bash routing.
+A: Shellfix **prefers pwsh 7** as its backend when `C:\Program Files\PowerShell\7\pwsh.exe` is available. This eliminates most PS 5.1 quirks (`&&`/`||`, NativeCommandError, UTF-8 encoding) natively. The shim and bash wrappers still provide value for cross-shell routing, path translation, and `-File` mode escaping protection. Set `SHELLFIX_FORCE_PS5=1` to revert to PS 5.1 if needed.
 
 **Q: Why not just switch to bash/Git Bash?**  
 A: Many IDE agent frameworks default to PowerShell on Windows. The shim lets them work without reconfiguring the agent itself.
 
 ## Known Limitations
 
-- The profile-layer fixes require the PowerShell profile to load. If a caller uses `-NoProfile`, the shim still handles routing/classification, but profile functions such as native stderr cleanup, ANSI stripping, and `Write-Utf8NoBom` are not loaded.
 - WSL routing requires the configured distro to exist and be running. Use `.\install.ps1 -WslDistro "<name>"` or set `SHELLFIX_WSL_DISTRO` when the default `Ubuntu-24.04` is not correct.
 - Native tool cleanup is allowlisted. Tools outside `$nativeTools` can still emit stderr or ANSI output until added to the profile wrapper list.
 - Shortcut patching affects the IDE process tree launched from the patched shortcut. Already-running IDE windows and shells launched from other shortcuts may keep their old PATH until restarted.
-- The `shellfix_<id>.ps1` temp-file pattern appears only in debug output for `-File` fallback mode. It is not expected during normal one-shot WSL routing or session proxy rewrites.
+- All PS one-shot commands go through temp `.ps1` files. This adds ~2ms overhead per command. Commands that depend on `-Command` expression evaluation semantics (bare expressions like `2+2`) need wrapping in `Write-Output`.
+- If the shim is not in PATH (e.g., after an IDE update), the profile will emit a `[SHELLFIX] Shim not active` warning. Re-run `install.ps1` to fix.
 
 ## Known Interactions
 
