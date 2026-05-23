@@ -36,7 +36,9 @@ const string DefaultWslDistro = "Ubuntu-24.04";
 // Set-Content encoding, and most argument escaping edge cases.
 // This eliminates ~60% of the problems ShellFix was built to work around.
 // Store in env var so static methods can read it.
-string RealPowerShell = File.Exists(Pwsh7Path) ? Pwsh7Path : Pwsh5Path;
+// Override: set SHELLFIX_FORCE_PS5=1 to revert to PS 5.1 if pwsh 7 causes issues.
+bool forcePs5 = Environment.GetEnvironmentVariable("SHELLFIX_FORCE_PS5") == "1";
+string RealPowerShell = (!forcePs5 && File.Exists(Pwsh7Path)) ? Pwsh7Path : Pwsh5Path;
 Environment.SetEnvironmentVariable("SHELLFIX_PS_BACKEND", RealPowerShell);
 bool UsingPwsh7 = RealPowerShell == Pwsh7Path;
 
