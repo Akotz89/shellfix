@@ -362,6 +362,16 @@ Test-Case "Issue #1 variant: triple &&" `
     "wsl -d $WslDistro -- bash -c `"echo one && echo two && echo three`"" `
     'three' -UseShim -SkipIfNoShim
 
+# Issue #4: $variable inside bash -c — PS expands $var to empty
+# before bash ever sees it, silently destroying loop variables
+Test-Case "Issue #4: `$var in bash -c for loop" `
+    "wsl -d $WslDistro -- bash -c `"for x in hello world; do echo item=`$x; done`"" `
+    'item=hello' -UseShim -SkipIfNoShim
+
+Test-Case "Issue #4: `$var in bash -c assignment" `
+    "wsl -d $WslDistro -- bash -c `"port=9999; echo port=`$port`"" `
+    'port=9999' -UseShim -SkipIfNoShim
+
 # ================================================================
 # Cleanup
 # ================================================================

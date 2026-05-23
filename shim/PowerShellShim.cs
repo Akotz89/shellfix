@@ -542,6 +542,22 @@ static int RunWslPassthrough(string command, bool debug)
         wslArgs.RemoveAt(0);
     }
 
+    // Fix Issue #4: escape $ inside the bash -c payload.
+    // wsl.exe -- bash -c "..." runs through the login shell, which
+    // expands $var to empty before the inner bash -c sees it.
+    // We need to escape $ → \$ in the payload (the arg after -c).
+    for (int argIdx = 0; argIdx < wslArgs.Count - 1; argIdx++)
+    {
+        if (wslArgs[argIdx] == "-c")
+        {
+            string payload = wslArgs[argIdx + 1];
+            // Escape unescaped $ signs (preserve already-escaped \$)
+            payload = Regex.Replace(payload, @"(?<!\\)\$", @"\$");
+            wslArgs[argIdx + 1] = payload;
+            break;
+        }
+    }
+
     var startInfo = new ProcessStartInfo
     {
         FileName = WslExe,

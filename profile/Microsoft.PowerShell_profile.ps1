@@ -300,9 +300,10 @@ $env:PS_PROFILE_LOADED = "yes"
 # IDE update replaced the shortcuts). The profile still works for
 # interactive terminals, but run_command escaping protection is OFF.
 if (-not $env:SHELLFIX_ACTIVE) {
-    $shimPath = Join-Path $env:USERPROFILE "bin\powershell.exe"
-    if (Test-Path $shimPath) {
+    $_sfx_shimPath = Join-Path $env:USERPROFILE "bin\powershell.exe"
+    if (Test-Path $_sfx_shimPath) {
         Write-Warning "[SHELLFIX] Shim not active. Escaping protection is OFF."
         Write-Warning "[SHELLFIX] Re-run install.ps1 to patch IDE shortcuts."
     }
+    Remove-Variable _sfx_shimPath -ErrorAction SilentlyContinue
 }
