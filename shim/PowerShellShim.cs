@@ -26,9 +26,19 @@ using System.Text.RegularExpressions;
 /// Debug mode: set PWSH_SHIM_DEBUG=1 to log decisions to stderr.
 /// </summary>
 
-const string RealPowerShell = @"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe";
+const string Pwsh7Path = @"C:\Program Files\PowerShell\7\pwsh.exe";
+const string Pwsh5Path = @"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe";
 const string WslExe = @"C:\Windows\System32\wsl.exe";
 const string DefaultWslDistro = "Ubuntu-24.04";
+
+// --- Choose PowerShell backend: prefer pwsh 7, fall back to 5.1 ---
+// pwsh 7 natively fixes: &&/|| operators, NativeCommandError, UTF-8,
+// Set-Content encoding, and most argument escaping edge cases.
+// This eliminates ~60% of the problems ShellFix was built to work around.
+// Store in env var so static methods can read it.
+string RealPowerShell = File.Exists(Pwsh7Path) ? Pwsh7Path : Pwsh5Path;
+Environment.SetEnvironmentVariable("SHELLFIX_PS_BACKEND", RealPowerShell);
+bool UsingPwsh7 = RealPowerShell == Pwsh7Path;
 
 // --- Kill switch ---
 if (Environment.GetEnvironmentVariable("PWSH_SHIM_BYPASS") == "1")
@@ -40,6 +50,13 @@ bool debug = Environment.GetEnvironmentVariable("PWSH_SHIM_DEBUG") == "1";
 
 // --- Breadcrumb: signal to the profile that the shim is active ---
 Environment.SetEnvironmentVariable("SHELLFIX_ACTIVE", "1");
+
+// --- Command logging: build empirical data on what agents send ---
+// Log file: %TEMP%\shellfix_commands.log
+// Each line: timestamp | classification | first 200 chars of command
+// Opt-in via SHELLFIX_LOG=1 or always-on in debug mode
+bool logging = debug || Environment.GetEnvironmentVariable("SHELLFIX_LOG") == "1";
+string? logPath = logging ? Path.Combine(Path.GetTempPath(), "shellfix_commands.log") : null;
 
 // --- Extract the command string from RAW command line ---
 // CRITICAL: We must NOT rely on args[] because PowerShell has already
@@ -104,8 +121,22 @@ if (!foundCommand || string.IsNullOrWhiteSpace(commandStr))
 
 // --- Classify: bash or PowerShell? ---
 bool isBash = LooksLikeBash(commandStr);
+string classification = isBash ? "BASH" : "PS";
 
-if (debug) Console.Error.WriteLine($"[SHIM] Classified as {(isBash ? "BASH" : "PS")}: {commandStr.Substring(0, Math.Min(80, commandStr.Length))}...");
+if (debug) Console.Error.WriteLine($"[SHIM] Backend={Path.GetFileName(RealPowerShell)} Classified={classification}: {commandStr.Substring(0, Math.Min(80, commandStr.Length))}...");
+
+// --- Log command for analysis ---
+if (logging && logPath != null)
+{
+    try
+    {
+        string snippet = commandStr.Length > 200 ? commandStr.Substring(0, 200) + "..." : commandStr;
+        snippet = snippet.Replace('\n', ' ').Replace('\r', ' ');
+        string logLine = $"{DateTime.Now:o} | {classification} | {Path.GetFileName(RealPowerShell)} | {snippet}\n";
+        File.AppendAllText(logPath, logLine);
+    }
+    catch { /* logging must never break the shim */ }
+}
 
 if (isBash)
 {
@@ -321,7 +352,7 @@ static int RunPsViaFile(string command, bool debug)
         
         var startInfo = new ProcessStartInfo
         {
-            FileName = RealPowerShell,
+            FileName = GetPsBackend(),
             UseShellExecute = false,
         };
         startInfo.ArgumentList.Add("-ExecutionPolicy");
@@ -375,7 +406,7 @@ static int RunWslBash(string command, bool debug)
     if (!File.Exists(WslExe))
     {
         Console.Error.WriteLine("[SHIM] wsl.exe not found. Falling back to PowerShell.");
-        return RunProcess(RealPowerShell, new[] { "-NoProfile", "-Command", command });
+        return RunProcess(GetPsBackend(), new[] { "-NoProfile", "-Command", command });
     }
 
     // --- Already-wrapped WSL commands: passthrough ---
@@ -430,7 +461,7 @@ static int RunWslBash(string command, bool debug)
         if (process is null)
         {
             Console.Error.WriteLine("[SHIM] Failed to start WSL. Falling back to PowerShell.");
-            return RunProcess(RealPowerShell, new[] { "-NoProfile", "-Command", command });
+            return RunProcess(GetPsBackend(), new[] { "-NoProfile", "-Command", command });
         }
         process.WaitForExit();
         return process.ExitCode;
@@ -440,7 +471,7 @@ static int RunWslBash(string command, bool debug)
         // WSL failed to launch (crashed, not installed, etc.)
         // Fall back to PowerShell so the agent isn't stuck
         Console.Error.WriteLine($"[SHIM] WSL exception: {ex.Message}. Falling back to PowerShell.");
-        return RunProcess(RealPowerShell, new[] { "-NoProfile", "-Command", command });
+        return RunProcess(GetPsBackend(), new[] { "-NoProfile", "-Command", command });
     }
 }
 
@@ -651,7 +682,7 @@ static int RunInteractiveProxy(string[] originalArgs, bool debug)
 {
     var startInfo = new ProcessStartInfo
     {
-        FileName = RealPowerShell,
+        FileName = GetPsBackend(),
         UseShellExecute = false,
         RedirectStandardInput = true,
         // Do NOT redirect stdout/stderr — let them flow directly to our
@@ -792,4 +823,13 @@ static bool HasProblematicTokens(string line)
         return true;
 
     return false;
+}
+
+// ============================================================
+// PowerShell backend accessor
+// ============================================================
+static string GetPsBackend()
+{
+    return Environment.GetEnvironmentVariable("SHELLFIX_PS_BACKEND")
+        ?? @"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe";
 }
