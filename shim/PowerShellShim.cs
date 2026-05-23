@@ -248,6 +248,21 @@ static bool HasDangerousQuoting(string cmd)
     if (singleQuotes % 2 != 0)
         return true;
     
+    // JSON-style quoted arrays: ["...", "..."] or [\"...\", \"...\"]
+    // These appear in Dockerfile ENTRYPOINT/CMD, curl -d payloads,
+    // and inline scripts. PS 5.1 re-escapes the inner quotes, producing
+    // [\"cmd\"] instead of ["cmd"], which breaks Docker exec-form and
+    // JSON parsers.
+    if (Regex.IsMatch(cmd, @"\[\\?""[^\]]*\\?""") ||     // ["..." or [\"...\"
+        Regex.IsMatch(cmd, @"\[\s*'[^\]]*'\s*\]"))         // ['...']
+        return true;
+
+    // Heredoc markers — content after << is passed through PS which
+    // re-interprets quotes, dollar signs, and backticks inside the
+    // heredoc body. Always route to -File.
+    if (Regex.IsMatch(cmd, @"<<\s*['""]?\w+['""]?"))
+        return true;
+
     // Mixed quoting patterns that confuse PS 5.1:
     // Double-quoted string containing single quotes with special chars nearby
     // e.g., --notes "text with 'quotes' and $vars and `backticks`"
@@ -740,6 +755,16 @@ static bool HasProblematicTokens(string line)
 
     // [N:-N] or [N:N] — PS interprets as array index/slice
     if (Regex.IsMatch(line, @"\[\d+:-?\d+\]")) return true;
+
+    // JSON-style quoted arrays: ["...", "..."] — PS re-escapes inner
+    // quotes when passing through -Command, producing [\"...\"] instead
+    // of ["..."]. This breaks Dockerfile ENTRYPOINT exec-form, JSON
+    // payloads in curl -d, and similar patterns.
+    if (Regex.IsMatch(line, @"\[\\?""[^\]]*\\?""")) return true;
+
+    // Heredoc markers: << 'EOF', <<EOF, <<-EOF — the heredoc body
+    // flows through PS which will mangle quotes and dollar signs.
+    if (Regex.IsMatch(line, @"<<-?\s*['""]?\w+['""]?")) return true;
 
     // Nested single quotes inside double quotes with bash-specific patterns
     // e.g., bash -c "python3 -c 'print(...)'"
