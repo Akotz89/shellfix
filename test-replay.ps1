@@ -123,6 +123,15 @@ Test-Proxy "wsl PATH colon token" `
     "wsl -d $WslDistro -- bash -c `"echo `$PATH:/usr/local/bin`"" `
     "/usr/local/bin"
 
+Write-Host ""
+Write-Host 'Pattern A5: WSL $HOME transcript command shapes:'
+Test-Proxy "wsl escaped HOME PATH export" `
+    "wsl -d $WslDistro -- bash -c `"export PATH=\`$HOME/.local/bin:\`$PATH && echo HOME=\`$HOME`"" `
+    "HOME=/home/"
+Test-Proxy "wsl literal HOME path lookup" `
+    "wsl -d $WslDistro -- bash -c `"test -d `$HOME && echo HOME_OK=`$HOME`"" `
+    "HOME_OK=/home/"
+
 # --- Pattern A: PS parsing [print()] as array index (step 3454) ---
 Write-Host ""
 Write-Host "Pattern A: PS parsing [print()] as array index (step 3454):"
@@ -204,6 +213,16 @@ if ($d2Path) {
     }
 } else {
     Write-Host "  SKIP: full-path d2 stderr redirect (d2 not found)" -ForegroundColor Yellow
+}
+
+$dotPath = (where.exe dot 2>$null | Select-Object -First 1)
+if (-not $dotPath -and (Test-Path 'C:\Program Files\Graphviz\bin\dot.exe')) {
+    $dotPath = 'C:\Program Files\Graphviz\bin\dot.exe'
+}
+if ($dotPath) {
+    Test-Proxy "full-path Graphviz dot stderr redirect" "& `"$dotPath`" -V 2>&1" "graphviz version"
+} else {
+    Write-Host "  SKIP: full-path Graphviz dot stderr redirect (dot not found)" -ForegroundColor Yellow
 }
 
 Write-Host ""

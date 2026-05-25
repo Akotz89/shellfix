@@ -81,7 +81,7 @@ internal sealed class DoctorCommand
 
     private static CheckResult CheckNativeToolRouting()
     {
-        var tools = new[] { "python", "python3", "node", "npx", "d2" };
+        var tools = new[] { "python", "python3", "node", "npx", "d2", "dot" };
         var resolved = new List<string>();
         var missing = new List<string>();
 
@@ -120,25 +120,32 @@ internal sealed class DoctorCommand
 
     private static CheckResult CheckDirectNativeRouting()
     {
-        var d2 = ResolveWindowsCommand("d2");
-        if (string.IsNullOrWhiteSpace(d2))
+        var noisyTools = new[] { "d2", "dot" };
+        var found = noisyTools
+            .Select(tool => new { Tool = tool, Path = ResolveWindowsCommand(tool), Candidates = ResolveWindowsCommands(tool) })
+            .Where(item => !string.IsNullOrWhiteSpace(item.Path))
+            .ToList();
+
+        if (found.Count == 0)
         {
             return new CheckResult
             {
                 Name = "native-direct",
                 Status = "warn",
-                Message = "Full-path native routing is enabled; d2 was not found for noisy-stderr verification.",
-                Remediation = "Install D2 if Antigravity needs diagram rendering, or use shellfix explain to inspect another command."
+                Message = "Full-path native routing is enabled; noisy-stderr tools d2/dot were not found for verification.",
+                Remediation = "Install D2 or Graphviz if Antigravity needs diagram rendering, or use shellfix explain to inspect another command."
             };
         }
 
-        var shadowed = ResolveWindowsCommands("d2");
-        var shadowNote = shadowed.Count > 1 ? $" candidates={string.Join(" | ", shadowed)}" : $" path={d2}";
+        var toolNotes = found.Select(item =>
+            item.Candidates.Count > 1
+                ? $"{item.Tool} candidates={string.Join(" | ", item.Candidates)}"
+                : $"{item.Tool} path={item.Path}");
         return new CheckResult
         {
             Name = "native-direct",
             Status = "pass",
-            Message = $"Full-path native routing enabled for known developer tools; noisy-stderr tool d2{shadowNote}",
+            Message = $"Full-path native routing enabled for known developer tools; noisy-stderr tools: {string.Join("; ", toolNotes)}",
             Remediation = ""
         };
     }

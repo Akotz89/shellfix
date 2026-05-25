@@ -183,6 +183,8 @@ emit(3000, 2250)
 '@.Trim().Replace('__DISTRO__', $WslDistro)
 Run-ProxyTest "wsl multiline python -c with commas" $wslMultilinePython 'Converted SVG -> PNG at 3000x2250'
 Run-ProxyTest "wsl bash PATH token" "wsl -d $WslDistro -- bash -c `"echo `$PATH:/usr/local/bin`"" '/usr/local/bin'
+Run-ProxyTest "wsl bash escaped HOME export" "wsl -d $WslDistro -- bash -c `"export PATH=\`$HOME/.local/bin:\`$PATH && echo HOME=\`$HOME`"" 'HOME=/home/'
+Run-ProxyTest "wsl bash literal HOME path lookup" "wsl -d $WslDistro -- bash -c `"test -d `$HOME && echo HOME_OK=`$HOME`"" 'HOME_OK=/home/'
 
 # --- Issue #3: Nested quotes ---
 Write-Host "`nIssue #3 (nested quotes):" -ForegroundColor Cyan
@@ -206,6 +208,16 @@ try {
     }
 } finally {
     Remove-Item -LiteralPath $d2Input, $d2Output -ErrorAction SilentlyContinue
+}
+
+$dotPath = (where.exe dot 2>$null | Select-Object -First 1)
+if (-not $dotPath -and (Test-Path 'C:\Program Files\Graphviz\bin\dot.exe')) {
+    $dotPath = 'C:\Program Files\Graphviz\bin\dot.exe'
+}
+if ($dotPath) {
+    Run-ProxyTest "full-path Graphviz dot with stderr redirect" "& `"$dotPath`" -V 2>&1" 'graphviz version'
+} else {
+    Run-ProxyTestIf $false "full-path Graphviz dot with stderr redirect" "" "" "dot not found"
 }
 
 # --- Regression: false positives ---

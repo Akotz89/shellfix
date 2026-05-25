@@ -144,7 +144,7 @@ internal sealed class ExplainCommand
         string[] native =
         [
             "python", "python3", "py", "pip", "pip3", "node", "npm", "npx",
-            "git", "gh", "dotnet", "docker", "kubectl", "cargo", "rustc", "d2"
+            "git", "gh", "dotnet", "docker", "kubectl", "cargo", "rustc", "d2", "dot"
         ];
         return native.Contains(normalized, StringComparer.OrdinalIgnoreCase);
     }

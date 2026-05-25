@@ -104,9 +104,10 @@ if (Test-WslAvailable) {
     Test-Smoke "Explicit WSL command" "wsl -d $WslDistro -- echo wsl-ok" 'wsl-ok'
     Test-Smoke "WSL bash && chain" "wsl -d $WslDistro -- bash -c `"echo left && echo right`"" 'left[\s\S]*right'
     Test-Smoke "Python slice syntax" ('wsl -d {0} -- bash -c "python3 -c ''print(list(range(5))[1:-1])''"' -f $WslDistro) '\[1.*2.*3\]'
+    Test-Smoke "WSL escaped HOME export" "wsl -d $WslDistro -- bash -c `"export PATH=\`$HOME/.local/bin:\`$PATH && echo HOME=\`$HOME`"" 'HOME=/home/'
 } else {
     Write-Host "SKIP: WSL smoke tests (distro unavailable: $WslDistro)" -ForegroundColor Yellow
-    $skip += 3
+    $skip += 4
 }
 
 Write-Host "============================================="

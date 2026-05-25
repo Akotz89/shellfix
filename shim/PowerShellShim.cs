@@ -712,7 +712,8 @@ static bool IsNativeFirstCommand(string commandName)
     string[] nativeFirst =
     {
         "python", "python3", "py", "pip", "pip3", "node", "npm", "npx",
-        "git", "gh", "dotnet", "docker", "kubectl", "cargo", "rustc", "d2"
+        "git", "gh", "dotnet", "docker", "kubectl", "cargo", "rustc",
+        "d2", "dot"
     };
     return nativeFirst.Contains(normalized, StringComparer.OrdinalIgnoreCase);
 }

@@ -286,6 +286,17 @@ if ($d2Command) {
     $skip++
 }
 
+$dotPath = (where.exe dot 2>$null | Select-Object -First 1)
+if (-not $dotPath -and (Test-Path 'C:\Program Files\Graphviz\bin\dot.exe')) {
+    $dotPath = 'C:\Program Files\Graphviz\bin\dot.exe'
+}
+if ($dotPath) {
+    Test-Case "Graphviz dot full-path direct avoids NativeCommandError" "& `"$dotPath`" -V 2>&1" 'graphviz version' -UseShim -SkipIfNoShim
+} else {
+    Write-Host "  SKIP: Graphviz dot stderr regression (dot not installed)" -ForegroundColor Yellow
+    $skip++
+}
+
 Write-Host ""
 Write-Host "--- Class 3: Clean Output ---"
 
@@ -459,6 +470,14 @@ Test-Case "Issue #5: WSL multiline python payload" `
 Test-Case "Issue #6: WSL `$PATH colon token" `
     "wsl -d $WslDistro -- bash -c `"echo `$PATH:/usr/local/bin`"" `
     '/usr/local/bin' -UseShim -SkipIfNoShim
+
+Test-Case "Issue #7: WSL escaped `$HOME PATH export" `
+    "wsl -d $WslDistro -- bash -c `"export PATH=\`$HOME/.local/bin:\`$PATH && echo HOME=\`$HOME`"" `
+    'HOME=/home/' -UseShim -SkipIfNoShim
+
+Test-Case "Issue #7: WSL literal `$HOME path lookup" `
+    "wsl -d $WslDistro -- bash -c `"test -d `$HOME && echo HOME_OK=`$HOME`"" `
+    'HOME_OK=/home/' -UseShim -SkipIfNoShim
 
 # ================================================================
 # Cleanup

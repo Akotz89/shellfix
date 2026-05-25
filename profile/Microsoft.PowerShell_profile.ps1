@@ -209,7 +209,7 @@ function global:_shellfix_strip_ansi {
     return $global:_shellfix_ansi_regex.Replace($s, '')
 }
 
-$nativeTools = @('git', 'npm', 'npx', 'dotnet', 'gh', 'cargo', 'rustc', 'docker', 'kubectl', 'd2')
+$nativeTools = @('git', 'npm', 'npx', 'dotnet', 'gh', 'cargo', 'rustc', 'docker', 'kubectl', 'd2', 'dot')
 
 foreach ($tool in $nativeTools) {
     # Only wrap if the tool exists as a real executable (not already a function)
