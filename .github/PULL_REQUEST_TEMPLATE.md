@@ -12,10 +12,12 @@ Linear:
 List the exact commands, GitHub Actions runs, or release URLs that prove the change.
 
 - [ ] `dotnet publish shim/PowerShellShim.csproj -c Release -o shim/out --nologo`
+- [ ] `dotnet publish src/Shellfix.Cli/Shellfix.Cli.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o src/Shellfix.Cli/out --nologo`
 - [ ] `.\test-ci-smoke.ps1 -ShimPath .\shim\out\powershell.exe`
 - [ ] `.\test.ps1 -ShimPath .\shim\out\powershell.exe`
 - [ ] `.\test-proxy.ps1 -ShimPath .\shim\out\powershell.exe`
 - [ ] `.\test-replay.ps1 -ShimPath .\shim\out\powershell.exe`
+- [ ] `.\src\Shellfix.Cli\out\shellfix.exe test`
 - [ ] Other:
 
 ## Install Or Release Impact

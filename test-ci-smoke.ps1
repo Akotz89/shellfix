@@ -90,7 +90,15 @@ Write-Host "  WSL distro: $WslDistro"
 Write-Host "============================================="
 
 Test-Smoke "PowerShell passthrough" 'Write-Output "ps-ok"' 'ps-ok'
-Test-Smoke "Native tool passthrough policy" 'git --version' '\[SHIM\] Classified as PS' -DebugShim
+Test-Smoke "Native tool direct policy" 'git --version' '\[SHIM\] Native direct: .*git' -DebugShim
+Test-Smoke "Native python inline" 'python -c "import sys; print(sys.executable)"' '^[A-Za-z]:\\'
+$nativePythonRegex = @'
+python -c "import re
+for m in re.finditer(r'https?://[^\s\'\",)]+', 'https://example.com/path'):
+    print(m.group())
+"
+'@.Trim()
+Test-Smoke "Native python multiline regex" $nativePythonRegex 'https://example.com/path'
 
 if (Test-WslAvailable) {
     Test-Smoke "Explicit WSL command" "wsl -d $WslDistro -- echo wsl-ok" 'wsl-ok'

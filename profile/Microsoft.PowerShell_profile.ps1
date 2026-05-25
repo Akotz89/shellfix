@@ -15,6 +15,29 @@ if (-not $env:SHELLFIX_WSL_DISTRO) {
 }
 $script:ShellfixWslDistro = $env:SHELLFIX_WSL_DISTRO
 
+# Refresh PATH from persisted User/Machine values. IDEs often keep running
+# after winget/installers update PATH, so newly installed tools can be invisible
+# until the IDE restarts. Preserve process-local entries and append missing
+# persisted entries in order.
+$_shellfixPathParts = [System.Collections.Generic.List[string]]::new()
+foreach ($_shellfixPathValue in @(
+    $env:PATH,
+    [Environment]::GetEnvironmentVariable('Path', 'Machine'),
+    [Environment]::GetEnvironmentVariable('Path', 'User')
+)) {
+    if ([string]::IsNullOrWhiteSpace($_shellfixPathValue)) { continue }
+    foreach ($_shellfixPathPart in ($_shellfixPathValue -split ';')) {
+        if ([string]::IsNullOrWhiteSpace($_shellfixPathPart)) { continue }
+        if ($_shellfixPathParts -notcontains $_shellfixPathPart) {
+            $_shellfixPathParts.Add($_shellfixPathPart) | Out-Null
+        }
+    }
+}
+if ($_shellfixPathParts.Count -gt 0) {
+    $env:PATH = ($_shellfixPathParts -join ';')
+}
+Remove-Variable _shellfixPathParts, _shellfixPathValue, _shellfixPathPart -ErrorAction SilentlyContinue
+
 # --- ANSI / Color Suppression ---
 # AI agents run in non-interactive terminals and can't parse ANSI escape
 # codes (colors, progress bars, spinners). These appear as garbled text
@@ -88,8 +111,12 @@ function global:Build-BashCmd {
 
 # --- Remove conflicting PowerShell aliases ---
 # curl → Invoke-WebRequest is particularly dangerous
-@('diff', 'sort', 'tee', 'cat', 'head', 'tail', 'find', 'file', 'curl') | ForEach-Object {
+@('diff', 'sort', 'tee', 'cat', 'head', 'tail', 'find', 'file', 'curl', 'where') | ForEach-Object {
     Remove-Item "Alias:$_" -Force -ErrorAction SilentlyContinue
+}
+
+function global:where {
+    & "$env:SystemRoot\System32\where.exe" @args
 }
 
 # --- Direct WSL Function Wrappers ---
@@ -182,11 +209,11 @@ function global:_shellfix_strip_ansi {
     return $global:_shellfix_ansi_regex.Replace($s, '')
 }
 
-$nativeTools = @('git', 'npm', 'npx', 'dotnet', 'gh', 'cargo', 'rustc', 'docker', 'kubectl')
+$nativeTools = @('git', 'npm', 'npx', 'dotnet', 'gh', 'cargo', 'rustc', 'docker', 'kubectl', 'd2')
 
 foreach ($tool in $nativeTools) {
     # Only wrap if the tool exists as a real executable (not already a function)
-    $existing = Get-Command $tool -CommandType Application -ErrorAction SilentlyContinue
+    $existing = Get-Command $tool -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($existing) {
         $exePath = $existing.Source
         # dotnet gets special treatment: inject --tl:off to disable Terminal Logger
@@ -294,16 +321,26 @@ if ($env:TERM_PROGRAM -eq 'vscode') {
 
 $env:PS_PROFILE_LOADED = "yes"
 
-# --- Shim Activation Watchdog ---
-# Warn if the profile loaded but the shim is not active. This happens
-# when the IDE was launched from an unpatched shortcut (e.g., after an
-# IDE update replaced the shortcuts). The profile still works for
-# interactive terminals, but run_command escaping protection is OFF.
-if (-not $env:SHELLFIX_ACTIVE) {
+# --- Shim Activation Diagnostic ---
+# Keep this quiet by default. Some shells intentionally load only the profile
+# layer while Antigravity agent/automation terminals route through the shim.
+# Use Test-ShellfixActivation or shellfix doctor for explicit diagnostics.
+function global:Test-ShellfixActivation {
     $_sfx_shimPath = Join-Path $env:USERPROFILE "bin\powershell.exe"
-    if (Test-Path $_sfx_shimPath) {
-        Write-Warning "[SHELLFIX] Shim not active. Escaping protection is OFF."
-        Write-Warning "[SHELLFIX] Re-run install.ps1 to patch IDE shortcuts."
+    [pscustomobject]@{
+        ShimActive = [bool]$env:SHELLFIX_ACTIVE
+        ProfileLoaded = ($env:PS_PROFILE_LOADED -eq "yes")
+        ShimPath = $_sfx_shimPath
+        ShimExists = Test-Path $_sfx_shimPath
+        CommandPath = (Get-Command powershell.exe -ErrorAction SilentlyContinue).Source
+        Backend = $env:SHELLFIX_PS_BACKEND
     }
-    Remove-Variable _sfx_shimPath -ErrorAction SilentlyContinue
+}
+
+if ($env:SHELLFIX_WARN_INACTIVE -eq "1" -and -not $env:SHELLFIX_ACTIVE) {
+    $_sfx_status = Test-ShellfixActivation
+    if ($_sfx_status.ShimExists) {
+        Write-Warning "[SHELLFIX] Profile loaded without shim activation. Run 'shellfix doctor' for routing details."
+    }
+    Remove-Variable _sfx_status -ErrorAction SilentlyContinue
 }

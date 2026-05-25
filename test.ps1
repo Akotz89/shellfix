@@ -44,20 +44,25 @@ function Test-Case {
             }
         }
         $shimExe = $script:ShimPath
-        # Use Start-Process with -ArgumentList to preserve the raw command string.
-        # Direct invocation (& $shimPath -Command $Command) causes PS to re-parse
-        # the command, mangling quotes and special characters before the shim sees it.
-        $tempOut = [System.IO.Path]::GetTempFileName()
+        # Use ProcessStartInfo.ArgumentList to preserve command boundaries.
+        # Start-Process -ArgumentList flattens multiline strings and can mangle
+        # exactly the inline payloads shellfix is meant to protect.
         try {
-            $proc = Start-Process -FilePath $shimExe `
-                -ArgumentList "-NoProfile", "-Command", $Command `
-                -NoNewWindow -Wait -PassThru `
-                -RedirectStandardOutput $tempOut `
-                -RedirectStandardError ([System.IO.Path]::GetTempFileName()) 2>$null
-            $output = Get-Content $tempOut -Raw -ErrorAction SilentlyContinue
-            if (-not $output) { $output = "" }
-        } finally {
-            Remove-Item $tempOut -Force -ErrorAction SilentlyContinue
+            $psi = [System.Diagnostics.ProcessStartInfo]::new()
+            $psi.FileName = (Resolve-Path $shimExe)
+            $psi.UseShellExecute = $false
+            $psi.RedirectStandardOutput = $true
+            $psi.RedirectStandardError = $true
+            $psi.ArgumentList.Add("-NoProfile")
+            $psi.ArgumentList.Add("-Command")
+            $psi.ArgumentList.Add($Command)
+            $proc = [System.Diagnostics.Process]::Start($psi)
+            $stdout = $proc.StandardOutput.ReadToEnd()
+            $stderr = $proc.StandardError.ReadToEnd()
+            $proc.WaitForExit()
+            $output = $stdout + $stderr
+        } catch {
+            $output = $_ | Out-String
         }
     } else {
         $output = Invoke-Expression $Command 2>&1 | Out-String
@@ -125,7 +130,10 @@ if ($env:PS_PROFILE_LOADED -eq "yes") {
 }
 
 # Create test fixtures
-wsl.exe -d $WslDistro -e bash -c "printf 'it'\''s a test\nhere'\''s another\n' > /tmp/shellfix_test.txt"
+$fixtureScript = @'
+printf "%s\n%s\n" "it's a test" "here's another" > /tmp/shellfix_test.txt
+'@.Trim()
+wsl.exe -d $WslDistro -- bash -lc $fixtureScript
 
 # ================================================================
 # CLASS 1: Bash Commands Through PowerShell
@@ -217,6 +225,65 @@ foreach ($tool in $nativeTests) {
         Write-Host "  SKIP: $tool not installed" -ForegroundColor Yellow
         $skip++
     }
+}
+
+if (Get-Command npx -CommandType Application -ErrorAction SilentlyContinue) {
+    Test-Case "where resolves npx as Windows tool" 'where npx' 'npx(\.cmd)?' -UseShim -SkipIfNoShim
+    Test-Case "npx wrapper executes single native path" 'npx --version' '\d+\.\d+\.\d+' -UseShim -SkipIfNoShim
+} else {
+    Write-Host "  SKIP: npx wrapper regression (npx not installed)" -ForegroundColor Yellow
+    $skip++
+}
+
+if (Get-Command python -CommandType Application -ErrorAction SilentlyContinue) {
+    Test-Case "python inline stays native" 'python -c "import sys; print(sys.executable)"' '^[A-Za-z]:\\' -UseShim -SkipIfNoShim
+    $nativePythonRegex = @'
+python -c "import re
+for m in re.finditer(r'https?://[^\s\'\",)]+', 'https://example.com/path'):
+    print(m.group())
+"
+'@.Trim()
+    Test-Case "python multiline regex avoids PowerShell parser" $nativePythonRegex 'https://example.com/path' -UseShim -SkipIfNoShim
+} else {
+    Write-Host "  SKIP: python native inline regression (python not installed)" -ForegroundColor Yellow
+    $skip++
+}
+
+if (Get-Command python3 -CommandType Application -ErrorAction SilentlyContinue) {
+    Test-Case "python3 inline stays native" 'python3 -c "import sys; print(sys.executable)"' '^[A-Za-z]:\\' -UseShim -SkipIfNoShim
+} else {
+    Write-Host "  SKIP: python3 native inline regression (python3 not installed)" -ForegroundColor Yellow
+    $skip++
+}
+
+if (Get-Command node -CommandType Application -ErrorAction SilentlyContinue) {
+    Test-Case "node inline stays native" 'node -e "console.log(process.execPath)"' '^[A-Za-z]:\\' -UseShim -SkipIfNoShim
+} else {
+    Write-Host "  SKIP: node native inline regression (node not installed)" -ForegroundColor Yellow
+    $skip++
+}
+
+$d2Command = Get-Command d2 -CommandType Application -ErrorAction SilentlyContinue
+if (-not $d2Command -and (Test-Path 'C:\Program Files\D2\d2.exe')) {
+    $d2Command = Get-Item 'C:\Program Files\D2\d2.exe'
+}
+if ($d2Command) {
+    Test-Case "d2 resolves after PATH refresh" 'd2 --version' 'v\d+\.\d+\.\d+' -UseShim -SkipIfNoShim
+    $d2Path = (where.exe d2 2>$null | Select-Object -First 1)
+    if (-not $d2Path -and (Test-Path 'C:\Program Files\D2\d2.exe')) {
+        $d2Path = 'C:\Program Files\D2\d2.exe'
+    }
+    $d2Input = Join-Path ([System.IO.Path]::GetTempPath()) "shellfix_test_d2_$([guid]::NewGuid().ToString('N')).d2"
+    $d2Output = [System.IO.Path]::ChangeExtension($d2Input, ".png")
+    try {
+        Set-Content -LiteralPath $d2Input -Value "x -> y" -Encoding UTF8
+        Test-Case "d2 full-path direct avoids NativeCommandError" "& `"$d2Path`" `"$d2Input`" `"$d2Output`" 2>&1" 'success: successfully compiled' -UseShim -SkipIfNoShim
+    } finally {
+        Remove-Item -LiteralPath $d2Input, $d2Output -ErrorAction SilentlyContinue
+    }
+} else {
+    Write-Host "  SKIP: d2 PATH refresh regression (d2 not installed)" -ForegroundColor Yellow
+    $skip++
 }
 
 Write-Host ""
@@ -371,6 +438,27 @@ Test-Case "Issue #4: `$var in bash -c for loop" `
 Test-Case "Issue #4: `$var in bash -c assignment" `
     "wsl -d $WslDistro -- bash -c `"port=9999; echo port=`$port`"" `
     'port=9999' -UseShim -SkipIfNoShim
+
+$wslMultilinePython = @'
+wsl -d __DISTRO__ -- bash -c "cd /tmp && python3 -c \"
+print('before conversion')
+def svg2png(url, write_to, output_width, output_height):
+    print('Converted SVG -> PNG at %sx%s' % (output_width, output_height))
+svg2png(
+    url='hipaa_final.svg',
+    write_to='hipaa_final.png',
+    output_width=3000,
+    output_height=2250
+)
+\""
+'@.Trim().Replace('__DISTRO__', $WslDistro)
+Test-Case "Issue #5: WSL multiline python payload" `
+    $wslMultilinePython `
+    'Converted SVG -> PNG at 3000x2250' -UseShim -SkipIfNoShim
+
+Test-Case "Issue #6: WSL `$PATH colon token" `
+    "wsl -d $WslDistro -- bash -c `"echo `$PATH:/usr/local/bin`"" `
+    '/usr/local/bin' -UseShim -SkipIfNoShim
 
 # ================================================================
 # Cleanup
