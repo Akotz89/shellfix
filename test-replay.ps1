@@ -148,6 +148,17 @@ NODE
 '@.Trim().Replace('__DISTRO__', $WslDistro)
 Test-Proxy "wsl node heredoc stdin" $wslNodeHeredoc "NODE_HEREDOC_OK"
 
+Write-Host ""
+Write-Host "Pattern A7: WSL venv multiline Python -c:"
+$wslDrawpyStylePython = @'
+wsl -d __DISTRO__ -- bash -c "/home/aaron/.venvs/diagrams/bin/python -c \"
+class O: pass
+o = O()
+print(type(type(o).__dict__.get('container', None)))
+\""
+'@.Trim().Replace('__DISTRO__', $WslDistro)
+Test-Proxy "wsl venv multiline python property lookup" $wslDrawpyStylePython "<class 'NoneType'>"
+
 # --- Pattern A: PS parsing [print()] as array index (step 3454) ---
 Write-Host ""
 Write-Host "Pattern A: PS parsing [print()] as array index (step 3454):"

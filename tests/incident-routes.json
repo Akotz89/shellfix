@@ -30,6 +30,12 @@
     "source": "command-shape-backlog:wsl-json-curl-payload"
   },
   {
+    "name": "wsl venv multiline python property lookup",
+    "command": "wsl -d Ubuntu-24.04 -- bash -c \"/home/aaron/.venvs/diagrams/bin/python -c \\\"\nclass O: pass\no = O()\nprint(type(type(o).__dict__.get('container', None)))\n\\\"\"",
+    "expectedRoute": "wsl-direct",
+    "source": "antigravity-screenshot:wsl-venv-inline-python"
+  },
+  {
     "name": "native multiline python regex",
     "command": "python -c \"import re\nfor m in re.finditer(r'https?://[^\\s\\'\\\",)]+', 'https://example.com/path'):\n    print(m.group())\n\"",
     "expectedRoute": "native-inline-tempfile",

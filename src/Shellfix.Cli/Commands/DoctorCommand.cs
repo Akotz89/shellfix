@@ -44,6 +44,7 @@ internal sealed class DoctorCommand
         checks.Add(ProfileInstaller.Check(context, state));
         checks.AddRange(new ShortcutManager(context).Check(state));
         checks.Add(AntigravitySettingsManager.Check(context, state));
+        checks.Add(CheckAntigravityRuntimeProcesses(shimPath));
 
         return new DoctorReport
         {
@@ -186,6 +187,74 @@ internal sealed class DoctorCommand
             Status = "pass",
             Message = $"Full-path native routing enabled for known developer tools; noisy-stderr tools: {string.Join("; ", toolNotes)}",
             Remediation = ""
+        };
+    }
+
+    private static CheckResult CheckAntigravityRuntimeProcesses(string shimPath)
+    {
+        var ps = File.Exists(PowerShellBackend.Pwsh7Path)
+            ? PowerShellBackend.Pwsh7Path
+            : PowerShellBackend.WindowsPowerShellPath;
+        var query = @"
+$antigravity = Get-CimInstance Win32_Process |
+  Where-Object { $_.Name -like 'Antigravity IDE*' -or $_.CommandLine -match 'Antigravity IDE|antigravity-ide' } |
+  Select-Object -ExpandProperty ProcessId
+$children = Get-CimInstance Win32_Process |
+  Where-Object { $_.Name -in @('powershell.exe','pwsh.exe') -and $antigravity -contains $_.ParentProcessId } |
+  ForEach-Object { '{0}|{1}|{2}' -f $_.ProcessId, $_.ExecutablePath, ($_.CommandLine -replace '\r?\n',' ') }
+$children
+";
+        var result = ProcessRunner.Run(ps, ["-NoProfile", "-Command", query]);
+        if (result.ExitCode != 0)
+        {
+            return new CheckResult
+            {
+                Name = "antigravity-runtime",
+                Status = "warn",
+                Message = $"Unable to inspect live Antigravity shell processes: {result.Stderr.Trim()}",
+                Remediation = "Run shellfix doctor again from a normal terminal."
+            };
+        }
+
+        var rows = result.Stdout
+            .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
+            .Select(line => line.Split('|', 3))
+            .Where(parts => parts.Length >= 2)
+            .ToList();
+
+        if (rows.Count == 0)
+        {
+            return new CheckResult
+            {
+                Name = "antigravity-runtime",
+                Status = "pass",
+                Message = "No live Antigravity PowerShell child processes detected.",
+                Remediation = ""
+            };
+        }
+
+        var bypasses = rows
+            .Where(parts => !parts[1].Equals(shimPath, StringComparison.OrdinalIgnoreCase))
+            .Select(parts => $"{parts[0]}={parts[1]}")
+            .ToList();
+
+        if (bypasses.Count == 0)
+        {
+            return new CheckResult
+            {
+                Name = "antigravity-runtime",
+                Status = "pass",
+                Message = $"Live Antigravity PowerShell children route through Shellfix: {rows.Count}",
+                Remediation = ""
+            };
+        }
+
+        return new CheckResult
+        {
+            Name = "antigravity-runtime",
+            Status = "warn",
+            Message = $"Live Antigravity PowerShell children bypass Shellfix: {string.Join("; ", bypasses)}",
+            Remediation = "Close stale Antigravity terminals/windows and reopen them after shellfix repair antigravity."
         };
     }
 
