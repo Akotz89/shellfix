@@ -71,7 +71,7 @@ Release binaries are **not** currently code-signed. This is a planned improvemen
 - In session proxy mode, the shim spawns the backend PowerShell as a child process and forwards ordinary stdin. Known fragile agent command shapes are executed directly by the shim so PowerShell does not parse foreign-language payloads.
 - The profile wraps native tools by merging stderr to stdout as plain strings. This does not suppress actual errors — exit codes are preserved.
 - The shim classifier is conservative: unsupported heredoc syntax is rejected before PowerShell parses it, and unknown commands default to PowerShell file-mode execution rather than WSL routing.
-- Antigravity settings repair writes only the relevant terminal profile keys and stores a backup before changing the file. `shellfix doctor` also reports live Antigravity PowerShell child processes that bypass the installed shim.
+- Antigravity settings repair writes only the relevant terminal profile keys, enables ConPTY for the compiled shim terminal profile, and stores a backup before changing the file. `shellfix doctor` also reports live Antigravity PowerShell child processes that bypass the installed shim and stale ConPTY-disabled terminal mode.
 
 ## Reporting Vulnerabilities
 

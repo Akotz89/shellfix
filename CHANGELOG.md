@@ -18,6 +18,7 @@ Current unreleased behavior supersedes older v1.5 proxy notes below: Shellfix is
 - Installer now merges Antigravity IDE user settings when `settings.json` exists.
 - Adds a `shellfix` terminal profile pointing at the installed shim.
 - Sets `terminal.integrated.agentHostProfile.windows`, `terminal.integrated.automationProfile.windows`, and `terminal.integrated.defaultProfile.windows` to Shellfix.
+- Sets `terminal.integrated.windowsEnableConpty` to `true` and reports stale ConPTY-disabled terminal mode in `shellfix doctor`.
 - Antigravity IDE is now settings-managed: Shellfix leaves Antigravity shortcuts as direct `Antigravity IDE.exe` shortcuts and removes stale launcher sidecars on reinstall.
 - Adds `install.ps1 -TestAntigravitySettings` for an idempotent temp-file merge test and `-SkipAntigravitySettings` to opt out.
 - `shellfix doctor` now reports live Antigravity PowerShell child processes that bypass the installed shim, which catches stale terminals/windows opened before repair or reinstall.
