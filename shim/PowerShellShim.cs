@@ -962,6 +962,7 @@ static int RunWslPassthrough(string command, bool debug)
         if (wslArgs[argIdx] == "-c")
         {
             string payload = wslArgs[argIdx + 1];
+            payload = NormalizeWslNewlines(payload);
             payload = Regex.Replace(payload, @"(?<!\\)\$", @"\$");
             wslArgs[argIdx + 1] = payload;
             break;
@@ -1025,8 +1026,13 @@ static bool TryParseWslHeredoc(string command, out List<string> wslArgs, out str
         wslArgs.RemoveAt(0);
     }
 
-    stdinBody = match.Groups["body"].Value;
+    stdinBody = NormalizeWslNewlines(match.Groups["body"].Value);
     return wslArgs.Count > 0;
+}
+
+static string NormalizeWslNewlines(string value)
+{
+    return value.Replace("\r\n", "\n").Replace("\r", "\n");
 }
 
 static int RunWslWithStdin(List<string> wslArgs, string stdinBody, bool debug)
@@ -1352,7 +1358,25 @@ static bool IsWslHeredocComplete(string command)
     }
 
     var marker = Regex.Escape(match.Groups["marker"].Value);
-    return Regex.IsMatch(command, @"(?m)^\s*" + marker + @"\s*$");
+    if (!Regex.IsMatch(command, @"(?m)^\s*" + marker + @"\s*$"))
+    {
+        return false;
+    }
+
+    // For direct stdin heredocs like:
+    //   wsl ... -- python3 << 'PY'
+    // the terminator is the end of the command even if the body contains
+    // unmatched quotes. For bash -c "... << 'EOF' ... EOF ...", the heredoc
+    // terminator only closes the nested heredoc; the outer bash -c quote may
+    // still have more shell script after it. Wait for the full quoted command
+    // to close before executing, otherwise the remaining script leaks to the
+    // backend PowerShell session.
+    if (Regex.IsMatch(command, @"\bbash\s+-(?:l)?c\b", RegexOptions.IgnoreCase))
+    {
+        return IsBufferedCommandComplete(command);
+    }
+
+    return true;
 }
 
 static bool IsBufferedCommandComplete(string command)

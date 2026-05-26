@@ -147,6 +147,17 @@ console.log('NODE_HEREDOC_OK')
 NODE
 '@.Trim().Replace('__DISTRO__', $WslDistro)
 Test-Proxy "wsl node heredoc stdin" $wslNodeHeredoc "NODE_HEREDOC_OK"
+$wslBashNestedHeredoc = @'
+wsl -d __DISTRO__ -- bash -c "
+cat > /tmp/shellfix_shape_replay.drawio << 'ENDXML'
+<mxCell id=\"10\" value=\"2D FW\" style=\"shape=mxgraph.networks.2d.firewall;sketch=0;html=1;fillColor=#C62828;strokeColor=none;verticalLabelPosition=bottom;verticalAlign=top;align=center;fontSize=11;fontStyle=1;\" vertex=\"1\" parent=\"1\">
+  <mxGeometry x=\"320\" y=\"150\" width=\"60\" height=\"48\" as=\"geometry\" />
+</mxCell>
+ENDXML
+grep fontStyle /tmp/shellfix_shape_replay.drawio
+"
+'@.Trim().Replace('__DISTRO__', $WslDistro)
+Test-Proxy "wsl bash nested heredoc trailing command" $wslBashNestedHeredoc "fontStyle=1"
 
 Write-Host ""
 Write-Host "Pattern A7: WSL venv multiline Python -c:"

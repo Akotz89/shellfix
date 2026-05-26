@@ -169,6 +169,17 @@ console.log('NODE_HEREDOC_OK')
 NODE
 '@.Trim().Replace('__DISTRO__', $WslDistro)
 Run-ProxyTest "wsl node heredoc stdin" $wslNodeHeredoc 'NODE_HEREDOC_OK'
+$wslBashNestedHeredoc = @'
+wsl -d __DISTRO__ -- bash -c "
+cat > /tmp/shellfix_shape_proxy.drawio << 'ENDXML'
+<mxCell id=\"10\" value=\"2D FW\" style=\"shape=mxgraph.networks.2d.firewall;sketch=0;html=1;fillColor=#C62828;strokeColor=none;verticalLabelPosition=bottom;verticalAlign=top;align=center;fontSize=11;fontStyle=1;\" vertex=\"1\" parent=\"1\">
+  <mxGeometry x=\"320\" y=\"150\" width=\"60\" height=\"48\" as=\"geometry\" />
+</mxCell>
+ENDXML
+grep fontStyle /tmp/shellfix_shape_proxy.drawio
+"
+'@.Trim().Replace('__DISTRO__', $WslDistro)
+Run-ProxyTest "wsl bash nested heredoc with trailing command" $wslBashNestedHeredoc 'fontStyle=1'
 
 # --- Issue #1: && ---
 Write-Host "`nIssue #1 (&&):" -ForegroundColor Cyan
