@@ -195,14 +195,14 @@ emit(3000, 2250)
 \""
 '@.Trim().Replace('__DISTRO__', $WslDistro)
 Run-ProxyTest "wsl multiline python -c with commas" $wslMultilinePython 'Converted SVG -> PNG at 3000x2250'
-$wslDrawpyStylePython = @'
+$wslVenvMultilinePython = @'
 wsl -d __DISTRO__ -- bash -c "/home/aaron/.venvs/diagrams/bin/python -c \"
 class O: pass
 o = O()
 print(type(type(o).__dict__.get('container', None)))
 \""
 '@.Trim().Replace('__DISTRO__', $WslDistro)
-Run-ProxyTest "wsl venv multiline python -c with property lookup" $wslDrawpyStylePython "<class 'NoneType'>"
+Run-ProxyTest "wsl venv multiline python -c with property lookup" $wslVenvMultilinePython "<class 'NoneType'>"
 Run-ProxyTest "wsl bash PATH token" "wsl -d $WslDistro -- bash -c `"echo `$PATH:/usr/local/bin`"" '/usr/local/bin'
 Run-ProxyTest "wsl bash escaped HOME export" "wsl -d $WslDistro -- bash -c `"export PATH=\`$HOME/.local/bin:\`$PATH && echo HOME=\`$HOME`"" 'HOME=/home/'
 Run-ProxyTest "wsl bash literal HOME path lookup" "wsl -d $WslDistro -- bash -c `"test -d `$HOME && echo HOME_OK=`$HOME`"" 'HOME_OK=/home/'
