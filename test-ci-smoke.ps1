@@ -90,15 +90,24 @@ Write-Host "  WSL distro: $WslDistro"
 Write-Host "============================================="
 
 Test-Smoke "PowerShell passthrough" 'Write-Output "ps-ok"' 'ps-ok'
-Test-Smoke "Native tool passthrough policy" 'git --version' '\[SHIM\] Classified as PS' -DebugShim
+Test-Smoke "Native tool direct policy" 'git --version' '\[SHIM\] Native direct: .*git' -DebugShim
+Test-Smoke "Native python inline" 'python -c "import sys; print(sys.executable)"' '^[A-Za-z]:\\'
+$nativePythonRegex = @'
+python -c "import re
+for m in re.finditer(r'https?://[^\s\'\",)]+', 'https://example.com/path'):
+    print(m.group())
+"
+'@.Trim()
+Test-Smoke "Native python multiline regex" $nativePythonRegex 'https://example.com/path'
 
 if (Test-WslAvailable) {
     Test-Smoke "Explicit WSL command" "wsl -d $WslDistro -- echo wsl-ok" 'wsl-ok'
     Test-Smoke "WSL bash && chain" "wsl -d $WslDistro -- bash -c `"echo left && echo right`"" 'left[\s\S]*right'
     Test-Smoke "Python slice syntax" ('wsl -d {0} -- bash -c "python3 -c ''print(list(range(5))[1:-1])''"' -f $WslDistro) '\[1.*2.*3\]'
+    Test-Smoke "WSL escaped HOME export" "wsl -d $WslDistro -- bash -c `"export PATH=\`$HOME/.local/bin:\`$PATH && echo HOME=\`$HOME`"" 'HOME=/home/'
 } else {
     Write-Host "SKIP: WSL smoke tests (distro unavailable: $WslDistro)" -ForegroundColor Yellow
-    $skip += 3
+    $skip += 4
 }
 
 Write-Host "============================================="

@@ -23,6 +23,17 @@ jobs:
       
       - name: Build shim
         run: dotnet publish shim/PowerShellShim.csproj -c Release -o shim/out --nologo
+
+      - name: Build CLI
+        run: |
+          dotnet publish src/Shellfix.Cli/Shellfix.Cli.csproj `
+            -c Release `
+            -r win-x64 `
+            --self-contained true `
+            -p:PublishSingleFile=true `
+            -p:IncludeNativeLibrariesForSelfExtract=true `
+            -o src/Shellfix.Cli/out `
+            --nologo
       
       - name: Verify build output
         run: |
@@ -39,10 +50,16 @@ jobs:
       - name: Run functional smoke tests
         run: .\test-ci-smoke.ps1 -ShimPath .\shim\out\powershell.exe
         shell: pwsh
+
+      - name: Run CLI self-tests
+        run: .\src\Shellfix.Cli\out\shellfix.exe test --antigravity-settings
+        shell: pwsh
       
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: shellfix-shim
-          path: shim/out/powershell.exe
+          name: shellfix-binaries
+          path: |
+            shim/out/powershell.exe
+            src/Shellfix.Cli/out/shellfix.exe
           retention-days: 30

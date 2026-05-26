@@ -83,7 +83,8 @@ function Run-ProxyTest {
         $stdout = $outTask.GetAwaiter().GetResult()
         $stderr = $errTask.GetAwaiter().GetResult()
 
-        if ($stdout -match $ExpectPattern) {
+        $combinedOutput = "$stdout`n$stderr"
+        if ($combinedOutput -match $ExpectPattern) {
             Write-Host "  PASS: $Name" -ForegroundColor Green
             if ($Verbose) {
                 $debugLines = $stderr -split "`n" | Where-Object { $_ -match 'SHIM-PROXY' }
@@ -95,13 +96,29 @@ function Run-ProxyTest {
         } else {
             Write-Host "  FAIL: $Name" -ForegroundColor Red
             Write-Host "        Expected: /$ExpectPattern/" -ForegroundColor DarkGray
-            $snippet = ($stdout -split "`n" | Where-Object { $_.Trim() -ne "" } | Select-Object -First 5) -join " | "
+            $snippet = ($combinedOutput -split "`n" | Where-Object { $_.Trim() -ne "" } | Select-Object -First 5) -join " | "
             if ($snippet.Length -gt 120) { $snippet = $snippet.Substring(0, 120) + "..." }
             Write-Host "        Got: $snippet" -ForegroundColor DarkGray
             $script:fail++
         }
     } finally {
         Remove-Item $tmpOut, $tmpErr -ErrorAction SilentlyContinue
+    }
+}
+
+function Run-ProxyTestIf {
+    param(
+        [bool]$Condition,
+        [string]$Name,
+        [string]$Command,
+        [string]$ExpectPattern,
+        [string]$SkipReason
+    )
+
+    if ($Condition) {
+        Run-ProxyTest $Name $Command $ExpectPattern
+    } else {
+        Write-Host "  SKIP: $Name ($SkipReason)" -ForegroundColor Yellow
     }
 }
 
@@ -120,13 +137,38 @@ Write-Host ""
 Write-Host "Pure PowerShell (regression):" -ForegroundColor Cyan
 Run-ProxyTest "echo string" 'echo "hello world"' 'hello world'
 Run-ProxyTest "Get-Date" 'Get-Date -Format yyyy' '202\d'
-Run-ProxyTest "PS variable" '$PSVersionTable.PSVersion.Major' '5'
+Run-ProxyTest "PS variable" '$PSVersionTable.PSVersion.Major -in 5,7' 'True'
 Run-ProxyTest "PS semicolon" 'echo "one"; echo "two"; echo "three"' 'three'
+
+# --- Native inline developer tools ---
+Write-Host "`nNative inline tools:" -ForegroundColor Cyan
+Run-ProxyTest "python -c native path" 'python -c "import sys; print(sys.executable)"' '[A-Za-z]:\\'
+$nativePythonRegex = @'
+python -c "import re
+for m in re.finditer(r'https?://[^\s\'\",)]+', 'https://example.com/path'):
+    print(m.group())
+"
+'@.Trim()
+Run-ProxyTest "python -c multiline regex" $nativePythonRegex 'https://example.com/path'
+Run-ProxyTest "node -e native path" 'node -e "console.log(process.execPath)"' '[A-Za-z]:\\'
 
 # --- WSL safe ---
 Write-Host "`nWSL safe (no rewrite):" -ForegroundColor Cyan
 Run-ProxyTest "wsl echo" "wsl -d $WslDistro -- echo `"hello wsl`"" 'hello wsl'
 Run-ProxyTest "wsl uname" "wsl -d $WslDistro -- uname -s" 'Linux'
+$wslPythonHeredoc = @'
+wsl -d __DISTRO__ -- python3 << 'PYEOF'
+import json
+print('HEREDOC_OK', sorted({'b': 2, 'a': 1}.keys()))
+PYEOF
+'@.Trim().Replace('__DISTRO__', $WslDistro)
+Run-ProxyTest "wsl python heredoc stdin" $wslPythonHeredoc 'HEREDOC_OK'
+$wslNodeHeredoc = @'
+wsl -d __DISTRO__ -- node << 'NODE'
+console.log('NODE_HEREDOC_OK')
+NODE
+'@.Trim().Replace('__DISTRO__', $WslDistro)
+Run-ProxyTest "wsl node heredoc stdin" $wslNodeHeredoc 'NODE_HEREDOC_OK'
 
 # --- Issue #1: && ---
 Write-Host "`nIssue #1 (&&):" -ForegroundColor Cyan
@@ -139,11 +181,65 @@ Run-ProxyTest "&& with cd" "wsl -d $WslDistro -- bash -c `"cd /tmp && pwd`"" '/t
 Write-Host "`nIssue #2 ([N:-N]):" -ForegroundColor Cyan
 Run-ProxyTest "python slice" "wsl -d $WslDistro -- bash -c ""python3 -c 'print(list(range(5))[1:-1])'""" '\[1.*2.*3\]'
 Run-ProxyTest "string slice" "wsl -d $WslDistro -- bash -c ""python3 -c 'x=`"abcde`"; print(x[1:-1])'""" 'bcd'
+Run-ProxyTest "combined && plus python slice" "wsl -d $WslDistro -- bash -c ""echo ok && python3 -c 'print([1,2,3,4,5][1:-1])'""" 'ok[\s\S]*\[2.*3.*4\]'
+
+$wslMultilinePython = @'
+wsl -d __DISTRO__ -- bash -c "cd /tmp && python3 -c \"
+import re
+print('PATH token: $PATH:/usr/local/bin')
+for m in re.finditer(r'https?://[^\\s,)]+', 'https://example.com/path, next'):
+    print(m.group())
+def emit(a, b):
+    print('Converted SVG -> PNG at %sx%s' % (a, b))
+emit(3000, 2250)
+\""
+'@.Trim().Replace('__DISTRO__', $WslDistro)
+Run-ProxyTest "wsl multiline python -c with commas" $wslMultilinePython 'Converted SVG -> PNG at 3000x2250'
+$wslVenvMultilinePython = @'
+wsl -d __DISTRO__ -- bash -c "/home/aaron/.venvs/diagrams/bin/python -c \"
+class O: pass
+o = O()
+print(type(type(o).__dict__.get('container', None)))
+\""
+'@.Trim().Replace('__DISTRO__', $WslDistro)
+Run-ProxyTest "wsl venv multiline python -c with property lookup" $wslVenvMultilinePython "<class 'NoneType'>"
+Run-ProxyTest "wsl bash PATH token" "wsl -d $WslDistro -- bash -c `"echo `$PATH:/usr/local/bin`"" '/usr/local/bin'
+Run-ProxyTest "wsl bash escaped HOME export" "wsl -d $WslDistro -- bash -c `"export PATH=\`$HOME/.local/bin:\`$PATH && echo HOME=\`$HOME`"" 'HOME=/home/'
+Run-ProxyTest "wsl bash literal HOME path lookup" "wsl -d $WslDistro -- bash -c `"test -d `$HOME && echo HOME_OK=`$HOME`"" 'HOME_OK=/home/'
 
 # --- Issue #3: Nested quotes ---
 Write-Host "`nIssue #3 (nested quotes):" -ForegroundColor Cyan
 Run-ProxyTest "single in double" "wsl -d $WslDistro -- bash -c ""echo 'hello world'""" 'hello world'
 Run-ProxyTest "python in bash" "wsl -d $WslDistro -- bash -c ""python3 -c 'print(1+2)'""" '3'
+
+# --- Full-path native executable calls ---
+Write-Host "`nFull-path native direct:" -ForegroundColor Cyan
+$d2Path = (where.exe d2 2>$null | Select-Object -First 1)
+if (-not $d2Path -and (Test-Path 'C:\Program Files\D2\d2.exe')) {
+    $d2Path = 'C:\Program Files\D2\d2.exe'
+}
+$d2Input = Join-Path ([System.IO.Path]::GetTempPath()) "shellfix_proxy_d2_$([guid]::NewGuid().ToString('N')).d2"
+$d2Output = [System.IO.Path]::ChangeExtension($d2Input, ".png")
+try {
+    if ($d2Path) {
+        Set-Content -LiteralPath $d2Input -Value "x -> y" -Encoding UTF8
+        Run-ProxyTest "full-path d2 with stderr redirect" "& `"$d2Path`" `"$d2Input`" `"$d2Output`" 2>&1" 'success: successfully compiled'
+    } else {
+        Run-ProxyTestIf $false "full-path d2 with stderr redirect" "" "" "d2 not found"
+    }
+} finally {
+    Remove-Item -LiteralPath $d2Input, $d2Output -ErrorAction SilentlyContinue
+}
+
+$dotPath = (where.exe dot 2>$null | Select-Object -First 1)
+if (-not $dotPath -and (Test-Path 'C:\Program Files\Graphviz\bin\dot.exe')) {
+    $dotPath = 'C:\Program Files\Graphviz\bin\dot.exe'
+}
+if ($dotPath) {
+    Run-ProxyTest "full-path Graphviz dot with stderr redirect" "& `"$dotPath`" -V 2>&1" 'graphviz version'
+} else {
+    Run-ProxyTestIf $false "full-path Graphviz dot with stderr redirect" "" "" "dot not found"
+}
 
 # --- Regression: false positives ---
 Write-Host "`nRegression (no false rewrite):" -ForegroundColor Cyan

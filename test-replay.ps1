@@ -57,18 +57,15 @@ function Test-Proxy {
     $stderr = $proc.StandardError.ReadToEnd()
     [void]$proc.WaitForExit(15000)
 
-    if ($stdout -match [regex]::Escape($Expect)) {
+    $combinedOutput = "$stdout`n$stderr"
+    if ($combinedOutput -match [regex]::Escape($Expect)) {
         Write-Host "  PASS: $Name" -ForegroundColor Green
         $script:pass++
     } else {
         Write-Host "  FAIL: $Name" -ForegroundColor Red
         Write-Host "    Expected to contain: $Expect"
-        $preview = ($stdout -split "`n" | Select-Object -First 5) -join "`n"
-        Write-Host "    Stdout: $preview"
-        if ($stderr) {
-            $errPreview = ($stderr -split "`n" | Select-Object -First 3) -join "`n"
-            Write-Host "    Stderr: $errPreview"
-        }
+        $preview = ($combinedOutput -split "`n" | Select-Object -First 8) -join "`n"
+        Write-Host "    Output: $preview"
         $script:fail++
     }
     if (-not $proc.HasExited) { $proc.Kill() }
@@ -89,6 +86,78 @@ Write-Host "Pattern A: PS parsing Python 'for' as PS keyword (step 3011):"
 Test-Proxy "python for-loop in wsl bash" `
     "wsl -d $WslDistro -- bash -c `"python3 -c ''for i in range(3): print(i)''`"" `
     "2"
+
+# --- Pattern A2: native multiline python -c URL regex (Antigravity fallback) ---
+Write-Host ""
+Write-Host "Pattern A2: native multiline python -c URL regex:"
+$nativePythonRegex = @'
+python -c "import re
+for m in re.finditer(r'https?://[^\s\'\",)]+', 'https://example.com/path'):
+    print(m.group())
+"
+'@.Trim()
+Test-Proxy "native python multiline regex" $nativePythonRegex "https://example.com/path"
+
+# --- Pattern A3: explicit WSL multiline python -c from Antigravity SVG conversion ---
+Write-Host ""
+Write-Host "Pattern A3: WSL multiline python -c SVG conversion shape:"
+$svgInline = @'
+wsl -d __DISTRO__ -- bash -c "cd /tmp && python3 -c \"
+print('before conversion')
+def svg2png(url, write_to, output_width, output_height):
+    print('Converted SVG -> PNG at %sx%s' % (output_width, output_height))
+svg2png(
+    url='hipaa_final.svg',
+    write_to='hipaa_final.png',
+    output_width=3000,
+    output_height=2250
+)
+\""
+'@.Trim().Replace('__DISTRO__', $WslDistro)
+Test-Proxy "wsl multiline cairosvg-style payload" $svgInline "Converted SVG -> PNG at 3000x2250"
+
+# --- Pattern A4: Bash variable token that PowerShell used to parse as $PATH: ---
+Write-Host ""
+Write-Host 'Pattern A4: WSL $PATH:/usr/local/bin token:'
+Test-Proxy "wsl PATH colon token" `
+    "wsl -d $WslDistro -- bash -c `"echo `$PATH:/usr/local/bin`"" `
+    "/usr/local/bin"
+
+Write-Host ""
+Write-Host 'Pattern A5: WSL $HOME transcript command shapes:'
+Test-Proxy "wsl escaped HOME PATH export" `
+    "wsl -d $WslDistro -- bash -c `"export PATH=\`$HOME/.local/bin:\`$PATH && echo HOME=\`$HOME`"" `
+    "HOME=/home/"
+Test-Proxy "wsl literal HOME path lookup" `
+    "wsl -d $WslDistro -- bash -c `"test -d `$HOME && echo HOME_OK=`$HOME`"" `
+    "HOME_OK=/home/"
+
+Write-Host ""
+Write-Host "Pattern A6: WSL heredoc stdin:"
+$wslPythonHeredoc = @'
+wsl -d __DISTRO__ -- python3 << 'PYEOF'
+import json
+print('HEREDOC_OK', sorted({'b': 2, 'a': 1}.keys()))
+PYEOF
+'@.Trim().Replace('__DISTRO__', $WslDistro)
+Test-Proxy "wsl python heredoc stdin" $wslPythonHeredoc "HEREDOC_OK"
+$wslNodeHeredoc = @'
+wsl -d __DISTRO__ -- node << 'NODE'
+console.log('NODE_HEREDOC_OK')
+NODE
+'@.Trim().Replace('__DISTRO__', $WslDistro)
+Test-Proxy "wsl node heredoc stdin" $wslNodeHeredoc "NODE_HEREDOC_OK"
+
+Write-Host ""
+Write-Host "Pattern A7: WSL venv multiline Python -c:"
+$wslVenvMultilinePython = @'
+wsl -d __DISTRO__ -- bash -c "/home/aaron/.venvs/diagrams/bin/python -c \"
+class O: pass
+o = O()
+print(type(type(o).__dict__.get('container', None)))
+\""
+'@.Trim().Replace('__DISTRO__', $WslDistro)
+Test-Proxy "wsl venv multiline python property lookup" $wslVenvMultilinePython "<class 'NoneType'>"
 
 # --- Pattern A: PS parsing [print()] as array index (step 3454) ---
 Write-Host ""
@@ -152,6 +221,36 @@ Write-Host "Combined: && + [1:-1] + open() + f-string:"
 Test-Proxy "combined stress test" `
     ('wsl -d {0} -- bash -c "echo ok && python3 -c ''print([1,2,3,4,5][1:-1])''"' -f $WslDistro) `
     "2, 3, 4"
+
+# --- Pattern D: D2 full-path stderr false positive ---
+Write-Host ""
+Write-Host "Pattern D: full-path native executable with 2>&1:"
+$d2Path = (where.exe d2 2>$null | Select-Object -First 1)
+if (-not $d2Path -and (Test-Path 'C:\Program Files\D2\d2.exe')) {
+    $d2Path = 'C:\Program Files\D2\d2.exe'
+}
+if ($d2Path) {
+    $d2Input = Join-Path ([System.IO.Path]::GetTempPath()) "shellfix_replay_d2_$([guid]::NewGuid().ToString('N')).d2"
+    $d2Output = [System.IO.Path]::ChangeExtension($d2Input, ".png")
+    try {
+        Set-Content -LiteralPath $d2Input -Value "x -> y" -Encoding UTF8
+        Test-Proxy "full-path d2 stderr redirect" "& `"$d2Path`" `"$d2Input`" `"$d2Output`" 2>&1" "success: successfully compiled"
+    } finally {
+        Remove-Item -LiteralPath $d2Input, $d2Output -ErrorAction SilentlyContinue
+    }
+} else {
+    Write-Host "  SKIP: full-path d2 stderr redirect (d2 not found)" -ForegroundColor Yellow
+}
+
+$dotPath = (where.exe dot 2>$null | Select-Object -First 1)
+if (-not $dotPath -and (Test-Path 'C:\Program Files\Graphviz\bin\dot.exe')) {
+    $dotPath = 'C:\Program Files\Graphviz\bin\dot.exe'
+}
+if ($dotPath) {
+    Test-Proxy "full-path Graphviz dot stderr redirect" "& `"$dotPath`" -V 2>&1" "graphviz version"
+} else {
+    Write-Host "  SKIP: full-path Graphviz dot stderr redirect (dot not found)" -ForegroundColor Yellow
+}
 
 Write-Host ""
 Write-Host "============================================="

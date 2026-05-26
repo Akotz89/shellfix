@@ -2,6 +2,46 @@
 
 All notable changes to this project will be documented in this file.
 
+Current unreleased behavior supersedes older v1.5 proxy notes below: Shellfix is now an agent-first router for explicit WSL, heredoc/stdin, native inline interpreter, and known native command shapes. Older `RewriteForProxy()` / `--%` entries are retained as release history, not current product guidance.
+
+## [Unreleased]
+
+### Added — Commercial installer management CLI
+- Added `shellfix.exe` as the primary management surface for `install`, `uninstall`, `status`, `doctor`, `repair antigravity`, and `test`.
+- Added `%LOCALAPPDATA%\Programs\Shellfix\` as the product install root while keeping `%USERPROFILE%\bin\powershell.exe` as the compatibility shim path.
+- Added `%LOCALAPPDATA%\Shellfix\state.json` and backup tracking for reversible profile, shortcut, PATH, and Antigravity settings changes.
+- Replaced the large PowerShell installer body with a compatibility bootstrapper that builds or locates `shellfix.exe` and forwards legacy flags.
+- Organized CLI code into command, service, model, utility, and test-support files instead of one large entrypoint.
+- Release and CI workflows now build and publish both `powershell.exe` and `shellfix.exe`.
+
+### Added — Antigravity IDE agent-shell settings hardening
+- Installer now merges Antigravity IDE user settings when `settings.json` exists.
+- Adds a `shellfix` terminal profile pointing at the installed shim.
+- Sets `terminal.integrated.agentHostProfile.windows`, `terminal.integrated.automationProfile.windows`, and `terminal.integrated.defaultProfile.windows` to Shellfix.
+- Antigravity IDE is now settings-managed: Shellfix leaves Antigravity shortcuts as direct `Antigravity IDE.exe` shortcuts and removes stale launcher sidecars on reinstall.
+- Adds `install.ps1 -TestAntigravitySettings` for an idempotent temp-file merge test and `-SkipAntigravitySettings` to opt out.
+- `shellfix doctor` now reports live Antigravity PowerShell child processes that bypass the installed shim, which catches stale terminals/windows opened before repair or reinstall.
+
+### Fixed — Agent-first WSL command shapes
+- Explicit `wsl` / `wsl.exe` commands now route directly through the shim before PowerShell can parse nested bash, Python, JSON, heredoc, or `$PATH` payloads.
+- Session proxy mode buffers WSL heredoc stdin payloads and pipes the body to WSL stdin, covering `wsl ... -- python3 << 'PY' ... PY` and Node equivalents.
+- Added incident route fixtures and replay coverage for WSL/bash multiline Python `-c`, JSON payloads, heredoc stdin, native inline Python/Node, native stderr false failures, and stale Antigravity shell bypass detection.
+
+### Fixed — pwsh 7 proxy quoting regression
+- Session proxy no longer injects `--%` into problematic WSL commands when the backend is PowerShell 7.
+- Added regression coverage for `&&` plus Python slice payloads in `wsl ... bash -c`.
+- Updated smoke/proxy tests for current debug output and PS 5.1/7 backend behavior.
+
+### Fixed — Native inline interpreter reliability
+- The shim now keeps installed Windows developer tools native-first, including `python`, `python3`, `py`, `node`, `npm`, and `npx`.
+- `python -c`, `python3 -c`, `py -c`, and `node -e` payloads are written to temporary script files and executed directly so PowerShell never parses the inline code body.
+- Session proxy mode now buffers multiline native inline payloads before execution, fixing Antigravity fallback cases where multiline Python was parsed as PowerShell.
+- `shellfix doctor` now reports resolved native paths for `python`, `python3`, `node`, and `npx`.
+- The profile refreshes PATH from persisted User/Machine environment entries so newly installed tools such as Winget-installed D2 are visible without restarting the IDE.
+- `d2` is wrapped as a native tool so its `success:`/`info:` stderr messages are normalized instead of looking like command failures to agents.
+
+---
+
 ## [1.7.1] — 2026-05-20
 
 ### Fixed — Shortcut patching quotes and restore path (OPE-116 / #13)
@@ -34,13 +74,13 @@ All notable changes to this project will be documented in this file.
 
 ## [1.6.0] — 2026-05-20
 
-### Fixed — Critical bugs found in user testing
+### Fixed — Release-blocking issues found in user testing
 
 #### Bug 1: Native dev tools routed to WSL instead of Windows
 `git`, `npm`, `node`, `npx`, `docker`, `kubectl`, `cargo`, `rustc`, `make`,
 `gcc`, `g++` were listed in the shim's `bashCommands` array. This caused:
-- `npm --version` → `bash: npm: command not found`
-- `git status --short` → ran WSL Git, showed entire Windows clone as modified
+- `npm --version` resolved inside WSL and failed when npm was only installed on Windows
+- `git status --short` ran WSL Git and reported the Windows checkout incorrectly
 
 **Fix:** Removed all Windows-native dev tools from the bash routing list. They
 now pass through to real PowerShell where the profile wraps them with
@@ -173,7 +213,7 @@ like `&&`, `[1:-1]`, and nested single quotes never reach PS's parser.
 - Fix: raw command line extraction bypasses PS bracket parsing
 
 #### Issue #3: Nested single quotes with `curl | python`
-- Multi-layer quoting (PS → bash → curl → Python) caused EOF errors
+- Multi-layer quoting across PowerShell, bash, curl, and Python caused EOF errors
 - Fix: `ParseCommandArgs()` respects double/single quoted strings in passthrough
 
 #### Issue #4: Heredoc documentation (Docs)
@@ -226,7 +266,7 @@ Based on extensive research across Cursor, Windsurf, Copilot, and Reddit forums.
 #### ANSI Escape Code Suppression
 - Profile sets `NO_COLOR=1` and `TERM=dumb` to suppress color codes at the source
 - All native tool wrappers now strip remaining ANSI escape sequences via regex
-- Prevents garbled `[31m` text that confuses agents into thinking commands failed
+- Prevents raw ANSI sequences such as `[31m` from being interpreted as failure output
 
 #### dotnet Terminal Logger Auto-Disable
 - `dotnet` wrapper auto-injects `--tl:off` for `build`, `test`, `run`, `publish`, `pack`, `restore`
@@ -252,16 +292,16 @@ Based on extensive research across Cursor, Windsurf, Copilot, and Reddit forums.
 
 ### Added — Two New Failure Classes
 
-Discovered during real-world usage that bash→WSL routing (Class 1) was only one of three distinct failure modes agents hit. Added fixes for Classes 2 and 3.
+Real-world usage showed that bash-to-WSL routing (Class 1) was only one of three distinct failure modes agents hit. Added fixes for Classes 2 and 3.
 
-#### Class 2: Complex PS Quoting → `-File` Fallback
+#### Class 2: Complex PS Quoting to `-File` Fallback
 - Added `HasDangerousQuoting()` heuristic to detect multi-line commands, unbalanced quotes, and mixed quoting patterns that break PS 5.1's `-Command` parser
 - Added `RunPsViaFile()` which writes commands to a temp `.ps1` file and runs with `-File`, completely bypassing argument parsing
 - Temp files are cleaned up automatically after execution
 
 #### Class 3: NativeCommandError Suppression
 - Profile now wraps `git`, `npm`, `npx`, `dotnet`, `gh`, `cargo`, `rustc`, `docker`, and `kubectl` in functions that merge stderr to stdout as plain strings
-- Prevents PS 5.1 from treating normal stderr output (progress, warnings, diagnostics) as errors (red text)
+- Prevents PS 5.1 from styling normal stderr output (progress, warnings, diagnostics) as command failure output
 - Exit codes still propagate correctly via `$LASTEXITCODE`
 
 ### Changed
@@ -285,10 +325,10 @@ Two-layer defense system for running bash commands through Windows PowerShell te
 
 #### Layer 1: C# Shim
 - Heuristic classifier (100+ bash commands, PS verb-noun detection, syntax markers)
-- Path translation: Windows → WSL with space-safe quoting
-- Apostrophe escaping (`'` → `\'`) — fixes infinite hang on `grep "it's"`
-- Dollar sign preservation (`$` → `\$`) — fixes awk/bash variable expansion
-- Glob re-quoting (`-name *.py` → `-name '*.py'`) — fixes find pattern expansion
+- Path translation: Windows to WSL with space-safe quoting
+- Apostrophe escaping (`'` to `\'`) fixes unmatched quotes in commands such as `grep "it's"`
+- Dollar sign preservation (`$` to `\$`) fixes awk/bash variable expansion
+- Glob re-quoting (`-name *.py` to `-name '*.py'`) fixes early glob expansion
 - WSL crash fallback to real PowerShell
 - WSL_UTF8 environment enforcement
 - Kill switch and debug mode
