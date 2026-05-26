@@ -58,7 +58,7 @@ function Test-Proxy {
     [void]$proc.WaitForExit(15000)
 
     $combinedOutput = "$stdout`n$stderr"
-    if ($combinedOutput -match [regex]::Escape($Expect)) {
+    if ($combinedOutput -match $Expect) {
         Write-Host "  PASS: $Name" -ForegroundColor Green
         $script:pass++
     } else {
@@ -158,6 +158,29 @@ grep fontStyle /tmp/shellfix_shape_replay.drawio
 "
 '@.Trim().Replace('__DISTRO__', $WslDistro)
 Test-Proxy "wsl bash nested heredoc trailing command" $wslBashNestedHeredoc "fontStyle=1"
+$wslBashStdinHeredoc = @'
+wsl -d __DISTRO__ -- bash -s <<'BASH'
+cat > /tmp/shellfix_bash_stdin_replay.txt <<'EOF'
+bash stdin ok
+EOF
+cat /tmp/shellfix_bash_stdin_replay.txt
+BASH
+'@.Trim().Replace('__DISTRO__', $WslDistro)
+Test-Proxy "wsl bash -s heredoc stdin" $wslBashStdinHeredoc "bash stdin ok"
+$wslMultipleHeredocs = @'
+wsl -d __DISTRO__ -- bash -c "
+cat > /tmp/shellfix_multi_a_replay.txt <<'EOF1'
+one
+EOF1
+cat > /tmp/shellfix_multi_b_replay.txt <<-'EOF2'
+	two
+EOF2
+cat /tmp/shellfix_multi_a_replay.txt /tmp/shellfix_multi_b_replay.txt
+"
+'@.Trim().Replace('__DISTRO__', $WslDistro)
+Test-Proxy "wsl bash multiple heredocs" $wslMultipleHeredocs "two"
+Test-Proxy "cmd wrapper wsl" "cmd /c `"wsl -d $WslDistro -- bash -c \`"echo cmd-wsl-ok\`"`"" "cmd-wsl-ok"
+Test-Proxy "cmd wrapper npx" "cmd /c npx -y npm@latest --version" "\d+\.\d+\.\d+"
 
 Write-Host ""
 Write-Host "Pattern A7: WSL venv multiline Python -c:"

@@ -38,7 +38,12 @@ internal sealed class ExplainCommand
                 riskFlags = route.RiskFlags,
                 tool = route.Tool,
                 scriptExtension = route.ScriptExtension,
-                argumentCount = route.Arguments?.Count ?? 0
+                argumentCount = route.Arguments?.Count ?? 0,
+                topLevelShell = route.TopLevelShell,
+                operatorOwner = route.OperatorOwner,
+                wrapperUnwrapped = route.WrapperUnwrapped,
+                blockedReason = route.BlockedReason,
+                routedCommand = route.RoutedCommand
             }, Json.Options));
             return 0;
         }
@@ -54,6 +59,13 @@ internal sealed class ExplainCommand
         }
         Console.WriteLine($"PowerShell parses payload: {(route.PowerShellParsesPayload ? "yes" : "no")}");
         Console.WriteLine($"Confidence: {route.Confidence}");
+        Console.WriteLine($"Top-level shell: {route.TopLevelShell}");
+        Console.WriteLine($"Operator owner: {route.OperatorOwner}");
+        Console.WriteLine($"Wrapper unwrapped: {(route.WrapperUnwrapped ? "yes" : "no")}");
+        if (!string.IsNullOrWhiteSpace(route.BlockedReason))
+        {
+            Console.WriteLine($"Blocked reason: {route.BlockedReason}");
+        }
         Console.WriteLine($"Risk flags: {(route.RiskFlags.Count == 0 ? "none" : string.Join(", ", route.RiskFlags))}");
         return 0;
     }

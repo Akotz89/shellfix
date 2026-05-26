@@ -24,6 +24,30 @@
     "source": "command-shape-backlog:wsl-bash-heredoc"
   },
   {
+    "name": "wsl bash stdin heredoc",
+    "command": "wsl -d Ubuntu-24.04 -- bash -s <<'BASH'\necho bash-stdin-ok\nBASH",
+    "expectedRoute": "wsl-direct",
+    "source": "planned-regression:wsl-bash-s-heredoc"
+  },
+  {
+    "name": "wsl bash nested multiple heredocs",
+    "command": "wsl -d Ubuntu-24.04 -- bash -c \"cat > /tmp/shellfix_a.txt <<'EOF1'\none\nEOF1\ncat > /tmp/shellfix_b.txt <<'EOF2'\ntwo\nEOF2\ncat /tmp/shellfix_a.txt /tmp/shellfix_b.txt\"",
+    "expectedRoute": "wsl-direct",
+    "source": "planned-regression:multiple-bash-heredocs"
+  },
+  {
+    "name": "cmd wrapper wsl",
+    "command": "cmd /c \"wsl -d Ubuntu-24.04 -- bash -c \\\"echo cmd-wsl-ok\\\"\"",
+    "expectedRoute": "wsl-direct",
+    "source": "planned-regression:cmd-wrapper-wsl"
+  },
+  {
+    "name": "cmd wrapper npx",
+    "command": "cmd /c npx -y npm@latest --version",
+    "expectedRoute": "native-direct",
+    "source": "planned-regression:cmd-wrapper-native"
+  },
+  {
     "name": "wsl json curl payload",
     "command": "wsl -d Ubuntu-24.04 -- bash -c \"printf '{\\\"jsonrpc\\\":\\\"2.0\\\",\\\"id\\\":1}' > /tmp/shellfix_mcp.json && cat /tmp/shellfix_mcp.json\"",
     "expectedRoute": "wsl-direct",
@@ -72,6 +96,12 @@
     "command": "Get-ChildItem | Select-Object -First 1",
     "expectedRoute": "powershell-file",
     "source": "planned-regression:powershell-native"
+  },
+  {
+    "name": "wsl top-level powershell pipeline stays powershell",
+    "command": "wsl -d Ubuntu-24.04 -- echo hello | Select-String hello",
+    "expectedRoute": "powershell-file",
+    "source": "planned-regression:mixed-powershell-pipeline"
   },
   {
     "name": "bash heredoc is not sent to powershell",

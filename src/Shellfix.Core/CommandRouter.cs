@@ -19,29 +19,66 @@ public sealed class CommandRouter
             return Unknown("Empty command.", ["empty"]);
         }
 
-        if (StartsWithWslCore(trimmed))
+        var grammar = CommandGrammar.Analyze(trimmed);
+        var routeCommand = grammar.UnwrappedCommand ?? trimmed;
+
+        if (grammar.BlockedReason is not null)
+        {
+            return new CommandRoute(
+                "powershell-file",
+                "Explicit WSL command is part of a top-level PowerShell expression, so Shellfix keeps PowerShell ownership.",
+                "",
+                true,
+                "medium",
+                DetectRiskFlags(trimmed),
+                RoutedCommand: trimmed,
+                TopLevelShell: grammar.TopLevelShell,
+                OperatorOwner: grammar.OperatorOwner,
+                WrapperUnwrapped: false,
+                BlockedReason: grammar.BlockedReason);
+        }
+
+        if (StartsWithWslCore(routeCommand))
         {
             return new CommandRoute(
                 "wsl-direct",
-                "Explicit wsl/wsl.exe command is executed directly with ProcessStartInfo.ArgumentList.",
+                grammar.Wrapper is null
+                    ? "Explicit wsl/wsl.exe command is executed directly with ProcessStartInfo.ArgumentList."
+                    : $"{grammar.Wrapper} wrapper around explicit WSL command is unwrapped and executed directly.",
                 @"C:\Windows\System32\wsl.exe",
                 false,
                 "high",
                 DetectRiskFlags(trimmed),
-                Arguments: CommandTokenizer.ParseCommandArgs(trimmed));
+                Arguments: CommandTokenizer.ParseCommandArgs(routeCommand),
+                RoutedCommand: routeCommand,
+                TopLevelShell: grammar.TopLevelShell,
+                OperatorOwner: grammar.OperatorOwner,
+                WrapperUnwrapped: grammar.Wrapper is not null,
+                BlockedReason: grammar.BlockedReason);
         }
 
-        if (ContainsHeredoc(trimmed))
+        if (ContainsHeredoc(routeCommand))
         {
-            return Unknown("Bash heredoc syntax is not safe to run through PowerShell; use explicit wsl/bash routing.", ["heredoc"]);
+            return new CommandRoute(
+                "unsupported/unknown",
+                "Bash heredoc syntax is not safe to run through PowerShell; use explicit wsl/bash routing.",
+                "",
+                false,
+                "low",
+                DetectRiskFlags(trimmed),
+                RoutedCommand: routeCommand,
+                TopLevelShell: grammar.TopLevelShell,
+                OperatorOwner: grammar.OperatorOwner,
+                WrapperUnwrapped: grammar.Wrapper is not null,
+                BlockedReason: "Bare heredoc has no safe owner outside explicit WSL/bash routing.");
         }
 
-        if (TryParseNativeInline(trimmed, out var inline))
+        if (TryParseNativeInline(routeCommand, grammar, trimmed, out var inline))
         {
             return inline;
         }
 
-        if (TryParseNativeDirect(trimmed, out var nativeDirect))
+        if (TryParseNativeDirect(routeCommand, grammar, trimmed, out var nativeDirect))
         {
             return nativeDirect;
         }
@@ -52,7 +89,12 @@ public sealed class CommandRouter
             "",
             true,
             "medium",
-            DetectRiskFlags(trimmed));
+            DetectRiskFlags(trimmed),
+            RoutedCommand: trimmed,
+            TopLevelShell: grammar.TopLevelShell,
+            OperatorOwner: grammar.OperatorOwner,
+            WrapperUnwrapped: false,
+            BlockedReason: grammar.BlockedReason);
     }
 
     public bool LooksLikeNativeInlineStart(string command)
@@ -76,7 +118,7 @@ public sealed class CommandRouter
 
     public bool IsBufferedCommandComplete(string command) => CommandTokenizer.IsBufferedCommandComplete(command);
 
-    private bool TryParseNativeInline(string command, out CommandRoute route)
+    private bool TryParseNativeInline(string command, CommandGrammarInfo grammar, string originalCommand, out CommandRoute route)
     {
         route = Unknown("Not a native inline command.", []);
         var index = 0;
@@ -114,15 +156,20 @@ public sealed class CommandRouter
             resolved,
             false,
             string.IsNullOrWhiteSpace(resolved) ? "medium" : "high",
-            DetectRiskFlags(command),
+            DetectRiskFlags(originalCommand),
             firstToken,
             normalized == "node" ? ".js" : ".py",
             payload,
-            args);
+            args,
+            RoutedCommand: command,
+            TopLevelShell: grammar.TopLevelShell,
+            OperatorOwner: grammar.OperatorOwner,
+            WrapperUnwrapped: grammar.Wrapper is not null,
+            BlockedReason: grammar.BlockedReason);
         return true;
     }
 
-    private bool TryParseNativeDirect(string command, out CommandRoute route)
+    private bool TryParseNativeDirect(string command, CommandGrammarInfo grammar, string originalCommand, out CommandRoute route)
     {
         route = Unknown("Not a native-direct command.", []);
         var trimmed = StripSimpleNativeRedirection(command);
@@ -166,9 +213,14 @@ public sealed class CommandRouter
             resolved,
             false,
             "high",
-            DetectRiskFlags(command),
+            DetectRiskFlags(originalCommand),
             firstToken,
-            Arguments: string.IsNullOrWhiteSpace(remainder) ? [] : CommandTokenizer.ParseCommandArgs(remainder));
+            Arguments: string.IsNullOrWhiteSpace(remainder) ? [] : CommandTokenizer.ParseCommandArgs(remainder),
+            RoutedCommand: command,
+            TopLevelShell: grammar.TopLevelShell,
+            OperatorOwner: grammar.OperatorOwner,
+            WrapperUnwrapped: grammar.Wrapper is not null,
+            BlockedReason: grammar.BlockedReason);
         return true;
     }
 
@@ -213,7 +265,7 @@ public sealed class CommandRouter
         return Regex.IsMatch(commandRemainder, @"(^|[^`]);|&&|\|\||(?<!\|)\|(?!\|)");
     }
 
-    private static bool ContainsHeredoc(string command) => Regex.IsMatch(command, @"<<\s*['""]?\w+['""]?");
+    private static bool ContainsHeredoc(string command) => CommandGrammar.ContainsHeredoc(command);
 
     private static IReadOnlyList<string> DetectRiskFlags(string command)
     {
