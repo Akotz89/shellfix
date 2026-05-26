@@ -54,9 +54,9 @@ internal sealed class ShellfixCli
           shellfix uninstall
           shellfix status [--json]
           shellfix doctor [--json]
-          shellfix explain "<command>"
+          shellfix explain [--json] "<command>"
           shellfix repair antigravity
-          shellfix test [--antigravity-settings] [--shortcuts]
+          shellfix test [--antigravity-settings] [--shortcuts] [--incidents] [--fixture <path>]
 
         Compatibility:
           install.ps1 remains as a bootstrapper and forwards legacy flags to this CLI.

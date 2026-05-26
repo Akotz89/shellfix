@@ -132,6 +132,22 @@ Test-Proxy "wsl literal HOME path lookup" `
     "wsl -d $WslDistro -- bash -c `"test -d `$HOME && echo HOME_OK=`$HOME`"" `
     "HOME_OK=/home/"
 
+Write-Host ""
+Write-Host "Pattern A6: WSL heredoc stdin:"
+$wslPythonHeredoc = @'
+wsl -d __DISTRO__ -- python3 << 'PYEOF'
+import json
+print('HEREDOC_OK', sorted({'b': 2, 'a': 1}.keys()))
+PYEOF
+'@.Trim().Replace('__DISTRO__', $WslDistro)
+Test-Proxy "wsl python heredoc stdin" $wslPythonHeredoc "HEREDOC_OK"
+$wslNodeHeredoc = @'
+wsl -d __DISTRO__ -- node << 'NODE'
+console.log('NODE_HEREDOC_OK')
+NODE
+'@.Trim().Replace('__DISTRO__', $WslDistro)
+Test-Proxy "wsl node heredoc stdin" $wslNodeHeredoc "NODE_HEREDOC_OK"
+
 # --- Pattern A: PS parsing [print()] as array index (step 3454) ---
 Write-Host ""
 Write-Host "Pattern A: PS parsing [print()] as array index (step 3454):"

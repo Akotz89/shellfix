@@ -156,6 +156,19 @@ Run-ProxyTest "node -e native path" 'node -e "console.log(process.execPath)"' '[
 Write-Host "`nWSL safe (no rewrite):" -ForegroundColor Cyan
 Run-ProxyTest "wsl echo" "wsl -d $WslDistro -- echo `"hello wsl`"" 'hello wsl'
 Run-ProxyTest "wsl uname" "wsl -d $WslDistro -- uname -s" 'Linux'
+$wslPythonHeredoc = @'
+wsl -d __DISTRO__ -- python3 << 'PYEOF'
+import json
+print('HEREDOC_OK', sorted({'b': 2, 'a': 1}.keys()))
+PYEOF
+'@.Trim().Replace('__DISTRO__', $WslDistro)
+Run-ProxyTest "wsl python heredoc stdin" $wslPythonHeredoc 'HEREDOC_OK'
+$wslNodeHeredoc = @'
+wsl -d __DISTRO__ -- node << 'NODE'
+console.log('NODE_HEREDOC_OK')
+NODE
+'@.Trim().Replace('__DISTRO__', $WslDistro)
+Run-ProxyTest "wsl node heredoc stdin" $wslNodeHeredoc 'NODE_HEREDOC_OK'
 
 # --- Issue #1: && ---
 Write-Host "`nIssue #1 (&&):" -ForegroundColor Cyan

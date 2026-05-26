@@ -36,6 +36,7 @@ internal sealed class DoctorCommand
         checks.Add(Check("cli", File.Exists(Path.Combine(installRoot, "shellfix.exe")) || File.Exists(context.ExecutablePath), $"CLI: {context.ExecutablePath}", "Run install.ps1 or shellfix install."));
         checks.Add(Check("shim", File.Exists(shimPath), $"Shim: {shimPath}", "Run shellfix install."));
         checks.Add(Check("shim-hash", File.Exists(shimPath), File.Exists(shimPath) ? $"SHA256: {Hashing.Sha256File(shimPath)[..12]}..." : "Shim hash unavailable", "Run shellfix install."));
+        checks.Add(CheckInstallDrift(context, installRoot, shimPath));
         checks.Add(WslManager.Check(wslDistro));
         checks.Add(CheckNativeToolRouting());
         checks.Add(CheckDirectNativeRouting());
@@ -81,7 +82,7 @@ internal sealed class DoctorCommand
 
     private static CheckResult CheckNativeToolRouting()
     {
-        var tools = new[] { "python", "python3", "node", "npx", "d2", "dot" };
+        var tools = new[] { "python", "python3", "node", "npx" };
         var resolved = new List<string>();
         var missing = new List<string>();
 
@@ -118,6 +119,44 @@ internal sealed class DoctorCommand
         };
     }
 
+    private static CheckResult CheckInstallDrift(ShellfixContext context, string installRoot, string shimPath)
+    {
+        var repoShim = Path.Combine(context.RepoRoot, "shim", "out", "powershell.exe");
+        var installedCli = Path.Combine(installRoot, "shellfix.exe");
+        var messages = new List<string>();
+        var drift = false;
+
+        if (File.Exists(repoShim) && File.Exists(shimPath))
+        {
+            var repoHash = Hashing.Sha256File(repoShim);
+            var installedHash = Hashing.Sha256File(shimPath);
+            messages.Add($"repo-shim={repoHash[..12]} installed-shim={installedHash[..12]}");
+            drift |= !repoHash.Equals(installedHash, StringComparison.OrdinalIgnoreCase);
+        }
+        else
+        {
+            messages.Add("repo shim output or installed shim missing; drift comparison skipped");
+        }
+
+        if (File.Exists(installedCli))
+        {
+            messages.Add($"installed-cli={installedCli}");
+        }
+        else
+        {
+            messages.Add("installed CLI not found in install root");
+            drift = true;
+        }
+
+        return new CheckResult
+        {
+            Name = "install-drift",
+            Status = drift ? "warn" : "pass",
+            Message = string.Join("; ", messages),
+            Remediation = drift ? "Run dotnet publish for shim/CLI, then reinstall with install.ps1 -SkipBuild or shellfix install --skip-build." : ""
+        };
+    }
+
     private static CheckResult CheckDirectNativeRouting()
     {
         var noisyTools = new[] { "d2", "dot" };
@@ -131,9 +170,9 @@ internal sealed class DoctorCommand
             return new CheckResult
             {
                 Name = "native-direct",
-                Status = "warn",
-                Message = "Full-path native routing is enabled; noisy-stderr tools d2/dot were not found for verification.",
-                Remediation = "Install D2 or Graphviz if Antigravity needs diagram rendering, or use shellfix explain to inspect another command."
+                Status = "pass",
+                Message = "Full-path native routing is enabled. No optional noisy-stderr tools were found for additional route display.",
+                Remediation = ""
             };
         }
 

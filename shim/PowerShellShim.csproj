@@ -8,4 +8,7 @@
     <SelfContained>false</SelfContained>
     <AssemblyName>powershell</AssemblyName>
   </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\src\Shellfix.Core\Shellfix.Core.csproj" />
+  </ItemGroup>
 </Project>

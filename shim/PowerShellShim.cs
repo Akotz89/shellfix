@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
+using Shellfix.Core;
 
 /// <summary>
 /// shellfix — C# Shim (Layer 1)
@@ -60,6 +61,7 @@ Environment.SetEnvironmentVariable("SHELLFIX_ACTIVE", "1");
 // Opt-in via SHELLFIX_LOG=1 or always-on in debug mode
 bool logging = debug || Environment.GetEnvironmentVariable("SHELLFIX_LOG") == "1";
 string? logPath = logging ? Path.Combine(Path.GetTempPath(), "shellfix_commands.log") : null;
+var commandRouter = new CommandRouter();
 
 // --- Extract the command string from RAW command line ---
 // CRITICAL: We must NOT rely on args[] because PowerShell has already
@@ -124,12 +126,29 @@ if (!foundCommand || string.IsNullOrWhiteSpace(commandStr))
     return RunProcess(RealPowerShell, args);
 }
 
-if (TryRunNativeInlineCommand(commandStr, debug, out int nativeInlineExitCode))
+CommandRoute route = commandRouter.Classify(commandStr);
+if (debug)
+{
+    Console.Error.WriteLine($"[SHIM] Route={route.Route} Confidence={route.Confidence} Reason={route.Reason}");
+}
+
+if (route.Is("unsupported/unknown") && route.RiskFlags.Contains("heredoc"))
+{
+    Console.Error.WriteLine("[SHIM] Unsupported command shape: bash heredoc syntax cannot be safely routed through PowerShell. Use explicit wsl -- bash -c or a script file.");
+    return 64;
+}
+
+if (route.Is("wsl-direct"))
+{
+    return RunWslPassthrough(commandStr, debug);
+}
+
+if (route.Is("native-inline-tempfile") && TryRunNativeInlineCommand(commandStr, debug, out int nativeInlineExitCode))
 {
     return nativeInlineExitCode;
 }
 
-if (TryRunNativeDirectCommand(commandStr, debug, out int nativeDirectExitCode))
+if (route.Is("native-direct") && TryRunNativeDirectCommand(commandStr, debug, out int nativeDirectExitCode))
 {
     return nativeDirectExitCode;
 }
@@ -417,24 +436,26 @@ static int RunProcess(string exe, string[] arguments)
 static bool TryRunNativeInlineCommand(string command, bool debug, out int exitCode)
 {
     exitCode = 0;
-    if (!TryParseNativeInlineCommand(command, out string tool, out string scriptExtension, out string code, out List<string> remainingArgs))
+    if (!TryParseNativeInlineCommand(command, out string tool, out string scriptExtension, out string code, out List<string> interpreterArgs, out List<string> remainingArgs))
         return false;
 
     string? nativePath = ResolveNativeCommand(tool);
     if (nativePath is null)
         return false;
 
-    exitCode = RunNativeInlineCommand(nativePath, scriptExtension, code, remainingArgs, debug);
+    exitCode = RunNativeInlineCommand(nativePath, scriptExtension, code, interpreterArgs, remainingArgs, debug);
     return true;
 }
 
-static int RunNativeInlineCommand(string nativePath, string scriptExtension, string code, List<string> remainingArgs, bool debug)
+static int RunNativeInlineCommand(string nativePath, string scriptExtension, string code, List<string> interpreterArgs, List<string> remainingArgs, bool debug)
 {
     string tempFile = Path.Combine(Path.GetTempPath(), $"shellfix_inline_{Guid.NewGuid():N}{scriptExtension}");
     try
     {
         File.WriteAllText(tempFile, code, new UTF8Encoding(false));
-        var args = new List<string> { tempFile };
+        var args = new List<string>();
+        args.AddRange(interpreterArgs);
+        args.Add(tempFile);
         args.AddRange(remainingArgs);
         if (debug)
         {
@@ -564,11 +585,13 @@ static bool TryParseNativeInlineCommand(
     out string tool,
     out string scriptExtension,
     out string code,
+    out List<string> interpreterArgs,
     out List<string> remainingArgs)
 {
     tool = "";
     scriptExtension = "";
     code = "";
+    interpreterArgs = new List<string>();
     remainingArgs = new List<string>();
 
     int index = 0;
@@ -593,6 +616,21 @@ static bool TryParseNativeInlineCommand(
     }
 
     SkipWhitespace(command, ref index);
+    if (normalized == "py")
+    {
+        int beforeVersionSwitch = index;
+        if (TryReadCommandToken(command, ref index, out string possibleVersion) &&
+            Regex.IsMatch(possibleVersion, @"^-\d+(?:\.\d+)?$"))
+        {
+            interpreterArgs.Add(possibleVersion);
+            SkipWhitespace(command, ref index);
+        }
+        else
+        {
+            index = beforeVersionSwitch;
+        }
+    }
+
     if (!TryReadCommandToken(command, ref index, out string switchToken) ||
         !switchToken.Equals(expectedSwitch, StringComparison.OrdinalIgnoreCase))
     {
@@ -607,27 +645,6 @@ static bool TryParseNativeInlineCommand(
     remainingArgs = string.IsNullOrWhiteSpace(remainder) ? new List<string>() : ParseCommandArgs(remainder);
     tool = firstToken;
     return true;
-}
-
-static bool LooksLikeNativeInlineStart(string command)
-{
-    int index = 0;
-    if (!TryReadCommandToken(command, ref index, out string firstToken))
-        return false;
-
-    string normalized = NormalizeCommandName(firstToken);
-    string expectedSwitch = normalized switch
-    {
-        "python" or "python3" or "py" => "-c",
-        "node" => "-e",
-        _ => ""
-    };
-    if (expectedSwitch.Length == 0)
-        return false;
-
-    SkipWhitespace(command, ref index);
-    return TryReadCommandToken(command, ref index, out string switchToken) &&
-        switchToken.Equals(expectedSwitch, StringComparison.OrdinalIgnoreCase);
 }
 
 static bool TryReadCommandToken(string input, ref int index, out string token)
@@ -919,6 +936,11 @@ static bool IsAlreadyWslWrapped(string cmd)
 
 static int RunWslPassthrough(string command, bool debug)
 {
+    if (TryParseWslHeredoc(command, out var heredocArgs, out var heredocBody))
+    {
+        return RunWslWithStdin(heredocArgs, heredocBody, debug);
+    }
+
     // Parse the wsl command into arguments, preserving quoted strings.
     // Input: wsl -d Ubuntu-24.04 -- bash -c "echo hello && echo world"
     // Output: ["-d", "Ubuntu-24.04", "--", "bash", "-c", "echo hello && echo world"]
@@ -977,6 +999,77 @@ static int RunWslPassthrough(string command, bool debug)
     catch (Exception ex)
     {
         Console.Error.WriteLine($"[SHIM] WSL passthrough exception: {ex.Message}");
+        return 127;
+    }
+}
+
+static bool TryParseWslHeredoc(string command, out List<string> wslArgs, out string stdinBody)
+{
+    wslArgs = new List<string>();
+    stdinBody = "";
+
+    var match = Regex.Match(
+        command.TrimEnd(),
+        @"(?s)^(?<prefix>wsl(?:\.exe)?\s+.*?)\s+<<\s*['""]?(?<marker>[A-Za-z_][A-Za-z0-9_]*)['""]?\s*\r?\n(?<body>.*?)\r?\n\k<marker>\s*$",
+        RegexOptions.IgnoreCase);
+    if (!match.Success)
+    {
+        return false;
+    }
+
+    wslArgs = ParseCommandArgs(match.Groups["prefix"].Value);
+    if (wslArgs.Count > 0 &&
+        (wslArgs[0].Equals("wsl", StringComparison.OrdinalIgnoreCase) ||
+         wslArgs[0].Equals("wsl.exe", StringComparison.OrdinalIgnoreCase)))
+    {
+        wslArgs.RemoveAt(0);
+    }
+
+    stdinBody = match.Groups["body"].Value;
+    return wslArgs.Count > 0;
+}
+
+static int RunWslWithStdin(List<string> wslArgs, string stdinBody, bool debug)
+{
+    var startInfo = new ProcessStartInfo
+    {
+        FileName = WslExe,
+        UseShellExecute = false,
+        RedirectStandardInput = true,
+    };
+    foreach (var arg in wslArgs)
+    {
+        startInfo.ArgumentList.Add(arg);
+    }
+    startInfo.Environment["WSL_UTF8"] = "1";
+
+    if (debug)
+    {
+        var preview = string.Join(" ", wslArgs.Select(a => a.Contains(' ') ? $"\"{a}\"" : a));
+        Console.Error.WriteLine($"[SHIM] WSL heredoc stdin: wsl.exe {preview.Substring(0, Math.Min(120, preview.Length))}...");
+    }
+
+    try
+    {
+        using var process = Process.Start(startInfo);
+        if (process is null)
+        {
+            Console.Error.WriteLine("[SHIM] Failed to start WSL heredoc command.");
+            return 127;
+        }
+
+        process.StandardInput.Write(stdinBody);
+        if (!stdinBody.EndsWith('\n'))
+        {
+            process.StandardInput.WriteLine();
+        }
+        process.StandardInput.Close();
+        process.WaitForExit();
+        return process.ExitCode;
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"[SHIM] WSL heredoc exception: {ex.Message}");
         return 127;
     }
 }
@@ -1123,6 +1216,7 @@ static int RunInteractiveProxy(string[] originalArgs, bool debug)
     // Read lines from our stdin and forward (possibly rewritten) to PS.
     // Inline interpreter payloads are buffered and executed natively so
     // PowerShell never parses the Python/JS body.
+    var proxyRouter = new CommandRouter();
     string? line;
     StringBuilder? inlineBuffer = null;
     StringBuilder? wslBuffer = null;
@@ -1138,7 +1232,8 @@ static int RunInteractiveProxy(string[] originalArgs, bool debug)
         {
             inlineBuffer.AppendLine(line);
             string bufferedCommand = inlineBuffer.ToString().TrimEnd('\r', '\n');
-            if (TryRunNativeInlineCommand(bufferedCommand, debug, out int bufferedInlineExitCode))
+            var bufferedRoute = proxyRouter.Classify(bufferedCommand);
+            if (bufferedRoute.Is("native-inline-tempfile") && TryRunNativeInlineCommand(bufferedCommand, debug, out int bufferedInlineExitCode))
             {
                 SetProxyLastExitCode(psStdin, bufferedInlineExitCode);
                 inlineBuffer = null;
@@ -1150,7 +1245,7 @@ static int RunInteractiveProxy(string[] originalArgs, bool debug)
         {
             wslBuffer.AppendLine(line);
             string bufferedCommand = wslBuffer.ToString().TrimEnd('\r', '\n');
-            if (IsBufferedCommandComplete(bufferedCommand))
+            if (IsWslHeredocComplete(bufferedCommand) || (!IsWslHeredocStart(bufferedCommand) && IsBufferedCommandComplete(bufferedCommand)))
             {
                 int exitCode = RunWslPassthrough(bufferedCommand, debug);
                 SetProxyLastExitCode(psStdin, exitCode);
@@ -1159,7 +1254,15 @@ static int RunInteractiveProxy(string[] originalArgs, bool debug)
             continue;
         }
 
-        if (LooksLikeNativeInlineStart(line))
+        var lineRoute = proxyRouter.Classify(line);
+        if (lineRoute.Is("unsupported/unknown") && lineRoute.RiskFlags.Contains("heredoc"))
+        {
+            Console.Error.WriteLine("[SHIM] Unsupported command shape: bash heredoc syntax cannot be safely routed through PowerShell. Use explicit wsl -- bash -c or a script file.");
+            SetProxyLastExitCode(psStdin, 64);
+            continue;
+        }
+
+        if (lineRoute.Is("native-inline-tempfile") || proxyRouter.LooksLikeNativeInlineStart(line))
         {
             if (TryRunNativeInlineCommand(line, debug, out int nativeInlineExitCode))
             {
@@ -1172,9 +1275,9 @@ static int RunInteractiveProxy(string[] originalArgs, bool debug)
             continue;
         }
 
-        if (StartsWithWslCommand(line))
+        if (lineRoute.Is("wsl-direct") || StartsWithWslCommand(line))
         {
-            if (IsBufferedCommandComplete(line))
+            if (!IsWslHeredocStart(line) && IsBufferedCommandComplete(line))
             {
                 int exitCode = RunWslPassthrough(line, debug);
                 SetProxyLastExitCode(psStdin, exitCode);
@@ -1187,7 +1290,7 @@ static int RunInteractiveProxy(string[] originalArgs, bool debug)
             continue;
         }
 
-        if (TryRunNativeDirectCommand(line, debug, out int nativeDirectExitCode))
+        if (lineRoute.Is("native-direct") && TryRunNativeDirectCommand(line, debug, out int nativeDirectExitCode))
         {
             SetProxyLastExitCode(psStdin, nativeDirectExitCode);
             continue;
@@ -1230,6 +1333,24 @@ static bool StartsWithWslCommand(string line)
     string trimmed = line.TrimStart();
     return trimmed.StartsWith("wsl ", StringComparison.OrdinalIgnoreCase) ||
            trimmed.StartsWith("wsl.exe ", StringComparison.OrdinalIgnoreCase);
+}
+
+static bool IsWslHeredocStart(string command)
+{
+    return StartsWithWslCommand(command) &&
+        Regex.IsMatch(command, @"<<\s*['""]?[A-Za-z_][A-Za-z0-9_]*['""]?", RegexOptions.IgnoreCase);
+}
+
+static bool IsWslHeredocComplete(string command)
+{
+    var match = Regex.Match(command, @"<<\s*['""]?(?<marker>[A-Za-z_][A-Za-z0-9_]*)['""]?", RegexOptions.IgnoreCase);
+    if (!match.Success)
+    {
+        return false;
+    }
+
+    var marker = Regex.Escape(match.Groups["marker"].Value);
+    return Regex.IsMatch(command, @"(?m)^\s*" + marker + @"\s*$");
 }
 
 static bool IsBufferedCommandComplete(string command)

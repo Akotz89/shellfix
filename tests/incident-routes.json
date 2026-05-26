@@ -1,0 +1,76 @@
+[
+  {
+    "name": "explicit wsl bash chain",
+    "command": "wsl -d Ubuntu-24.04 -- bash -c \"echo ok && python3 -c 'print(list(range(5))[1:-1])'\"",
+    "expectedRoute": "wsl-direct",
+    "source": "powershell-command-primary-clusters:wsl-bash-c"
+  },
+  {
+    "name": "wsl python heredoc stdin",
+    "command": "wsl -d Ubuntu-24.04 -- python3 << 'PYEOF'\nimport json\nprint('servers', sorted({'b': 2, 'a': 1}.keys()))\nPYEOF",
+    "expectedRoute": "wsl-direct",
+    "source": "command-shape-backlog:wsl-heredoc-stdin"
+  },
+  {
+    "name": "wsl node heredoc stdin",
+    "command": "wsl -d Ubuntu-24.04 -- node << 'NODE'\nconsole.log(['a','b'].join(','))\nNODE",
+    "expectedRoute": "wsl-direct",
+    "source": "command-shape-backlog:wsl-node-heredoc-stdin"
+  },
+  {
+    "name": "wsl bash heredoc",
+    "command": "wsl -d Ubuntu-24.04 -- bash -lc \"python3 - <<'PY'\nprint('bash heredoc ok')\nPY\"",
+    "expectedRoute": "wsl-direct",
+    "source": "command-shape-backlog:wsl-bash-heredoc"
+  },
+  {
+    "name": "wsl json curl payload",
+    "command": "wsl -d Ubuntu-24.04 -- bash -c \"printf '{\\\"jsonrpc\\\":\\\"2.0\\\",\\\"id\\\":1}' > /tmp/shellfix_mcp.json && cat /tmp/shellfix_mcp.json\"",
+    "expectedRoute": "wsl-direct",
+    "source": "command-shape-backlog:wsl-json-curl-payload"
+  },
+  {
+    "name": "native multiline python regex",
+    "command": "python -c \"import re\nfor m in re.finditer(r'https?://[^\\s\\'\\\",)]+', 'https://example.com/path'):\n    print(m.group())\n\"",
+    "expectedRoute": "native-inline-tempfile",
+    "source": "powershell-command-primary-clusters:native-inline-python"
+  },
+  {
+    "name": "py launcher version switch",
+    "command": "py -3 -c \"print('ok')\"",
+    "expectedRoute": "native-inline-tempfile",
+    "source": "planned-regression:py-version-switch"
+  },
+  {
+    "name": "native node inline",
+    "command": "node -e \"console.log(process.execPath)\"",
+    "expectedRoute": "native-inline-tempfile",
+    "source": "powershell-command-primary-clusters:native-inline-node"
+  },
+  {
+    "name": "d2 stderr redirect",
+    "command": "& \"{{d2}}\" \"input.d2\" \"output.png\" 2>&1",
+    "expectedRoute": "native-direct",
+    "requiredTool": "d2",
+    "source": "powershell-command-primary-clusters:native-d2-stderr"
+  },
+  {
+    "name": "graphviz stderr redirect",
+    "command": "& \"{{dot}}\" -V 2>&1",
+    "expectedRoute": "native-direct",
+    "requiredTool": "dot",
+    "source": "powershell-command-primary-clusters:native-graphviz-stderr"
+  },
+  {
+    "name": "powershell pipeline stays powershell",
+    "command": "Get-ChildItem | Select-Object -First 1",
+    "expectedRoute": "powershell-file",
+    "source": "planned-regression:powershell-native"
+  },
+  {
+    "name": "bash heredoc is not sent to powershell",
+    "command": "python - <<'PY'\nprint('bad shell shape')\nPY",
+    "expectedRoute": "unsupported/unknown",
+    "source": "powershell-command-primary-clusters:heredoc"
+  }
+]
