@@ -180,6 +180,29 @@ grep fontStyle /tmp/shellfix_shape_proxy.drawio
 "
 '@.Trim().Replace('__DISTRO__', $WslDistro)
 Run-ProxyTest "wsl bash nested heredoc with trailing command" $wslBashNestedHeredoc 'fontStyle=1'
+$wslBashStdinHeredoc = @'
+wsl -d __DISTRO__ -- bash -s <<'BASH'
+cat > /tmp/shellfix_bash_stdin.txt <<'EOF'
+bash stdin ok
+EOF
+cat /tmp/shellfix_bash_stdin.txt
+BASH
+'@.Trim().Replace('__DISTRO__', $WslDistro)
+Run-ProxyTest "wsl bash -s heredoc stdin" $wslBashStdinHeredoc 'bash stdin ok'
+$wslMultipleHeredocs = @'
+wsl -d __DISTRO__ -- bash -c "
+cat > /tmp/shellfix_multi_a.txt <<'EOF1'
+one
+EOF1
+cat > /tmp/shellfix_multi_b.txt <<-'EOF2'
+	two
+EOF2
+cat /tmp/shellfix_multi_a.txt /tmp/shellfix_multi_b.txt
+"
+'@.Trim().Replace('__DISTRO__', $WslDistro)
+Run-ProxyTest "wsl bash multiple heredocs" $wslMultipleHeredocs 'one[\s\S]*two'
+Run-ProxyTest "cmd wrapper wsl" "cmd /c `"wsl -d $WslDistro -- bash -c \`"echo cmd-wsl-ok\`"`"" 'cmd-wsl-ok'
+Run-ProxyTest "cmd wrapper npx" "cmd /c npx -y npm@latest --version" '\d+\.\d+\.\d+'
 
 # --- Issue #1: && ---
 Write-Host "`nIssue #1 (&&):" -ForegroundColor Cyan

@@ -129,7 +129,7 @@ if (!foundCommand || string.IsNullOrWhiteSpace(commandStr))
 CommandRoute route = commandRouter.Classify(commandStr);
 if (debug)
 {
-    Console.Error.WriteLine($"[SHIM] Route={route.Route} Confidence={route.Confidence} Reason={route.Reason}");
+    Console.Error.WriteLine($"[SHIM] Route={route.Route} Confidence={route.Confidence} Shell={route.TopLevelShell} Owner={route.OperatorOwner} Unwrapped={route.WrapperUnwrapped} Reason={route.Reason}");
 }
 
 if (route.Is("unsupported/unknown") && route.RiskFlags.Contains("heredoc"))
@@ -140,15 +140,15 @@ if (route.Is("unsupported/unknown") && route.RiskFlags.Contains("heredoc"))
 
 if (route.Is("wsl-direct"))
 {
-    return RunWslPassthrough(commandStr, debug);
+    return RunWslPassthrough(route.RoutedCommand ?? commandStr, debug);
 }
 
-if (route.Is("native-inline-tempfile") && TryRunNativeInlineCommand(commandStr, debug, out int nativeInlineExitCode))
+if (route.Is("native-inline-tempfile") && TryRunNativeInlineCommand(route.RoutedCommand ?? commandStr, debug, out int nativeInlineExitCode))
 {
     return nativeInlineExitCode;
 }
 
-if (route.Is("native-direct") && TryRunNativeDirectCommand(commandStr, debug, out int nativeDirectExitCode))
+if (route.Is("native-direct") && TryRunNativeDirectCommand(route.RoutedCommand ?? commandStr, debug, out int nativeDirectExitCode))
 {
     return nativeDirectExitCode;
 }
@@ -1011,7 +1011,7 @@ static bool TryParseWslHeredoc(string command, out List<string> wslArgs, out str
 
     var match = Regex.Match(
         command.TrimEnd(),
-        @"(?s)^(?<prefix>wsl(?:\.exe)?\s+.*?)\s+<<\s*['""]?(?<marker>[A-Za-z_][A-Za-z0-9_]*)['""]?\s*\r?\n(?<body>.*?)\r?\n\k<marker>\s*$",
+        @"(?s)^(?<prefix>wsl(?:\.exe)?\s+.*?)\s+<<-?\s*['""]?(?<marker>[A-Za-z_][A-Za-z0-9_]*)['""]?\s*\r?\n(?<body>.*?)\r?\n[ \t]*\k<marker>\s*$",
         RegexOptions.IgnoreCase);
     if (!match.Success)
     {
@@ -1064,10 +1064,11 @@ static int RunWslWithStdin(List<string> wslArgs, string stdinBody, bool debug)
             return 127;
         }
 
+        process.StandardInput.NewLine = "\n";
         process.StandardInput.Write(stdinBody);
         if (!stdinBody.EndsWith('\n'))
         {
-            process.StandardInput.WriteLine();
+            process.StandardInput.Write("\n");
         }
         process.StandardInput.Close();
         process.WaitForExit();
@@ -1253,9 +1254,11 @@ static int RunInteractiveProxy(string[] originalArgs, bool debug)
         {
             wslBuffer.AppendLine(line);
             string bufferedCommand = wslBuffer.ToString().TrimEnd('\r', '\n');
-            if (IsWslHeredocComplete(bufferedCommand) || (!IsWslHeredocStart(bufferedCommand) && IsBufferedCommandComplete(bufferedCommand)))
+            var bufferedRoute = proxyRouter.Classify(bufferedCommand);
+            string routedBufferedCommand = bufferedRoute.RoutedCommand ?? bufferedCommand;
+            if (IsWslHeredocComplete(routedBufferedCommand) || (!IsWslHeredocStart(routedBufferedCommand) && IsBufferedCommandComplete(bufferedCommand)))
             {
-                int exitCode = RunWslPassthrough(bufferedCommand, debug);
+                int exitCode = RunWslPassthrough(routedBufferedCommand, debug);
                 SetProxyLastExitCode(psStdin, exitCode);
                 wslBuffer = null;
             }
@@ -1272,7 +1275,7 @@ static int RunInteractiveProxy(string[] originalArgs, bool debug)
 
         if (lineRoute.Is("native-inline-tempfile") || proxyRouter.LooksLikeNativeInlineStart(line))
         {
-            if (TryRunNativeInlineCommand(line, debug, out int nativeInlineExitCode))
+            if (TryRunNativeInlineCommand(lineRoute.RoutedCommand ?? line, debug, out int nativeInlineExitCode))
             {
                 SetProxyLastExitCode(psStdin, nativeInlineExitCode);
                 continue;
@@ -1285,9 +1288,10 @@ static int RunInteractiveProxy(string[] originalArgs, bool debug)
 
         if (lineRoute.Is("wsl-direct") || StartsWithWslCommand(line))
         {
-            if (!IsWslHeredocStart(line) && IsBufferedCommandComplete(line))
+            string routedLine = lineRoute.RoutedCommand ?? line;
+            if (!IsWslHeredocStart(routedLine) && IsBufferedCommandComplete(line))
             {
-                int exitCode = RunWslPassthrough(line, debug);
+                int exitCode = RunWslPassthrough(routedLine, debug);
                 SetProxyLastExitCode(psStdin, exitCode);
             }
             else
@@ -1298,7 +1302,7 @@ static int RunInteractiveProxy(string[] originalArgs, bool debug)
             continue;
         }
 
-        if (lineRoute.Is("native-direct") && TryRunNativeDirectCommand(line, debug, out int nativeDirectExitCode))
+        if (lineRoute.Is("native-direct") && TryRunNativeDirectCommand(lineRoute.RoutedCommand ?? line, debug, out int nativeDirectExitCode))
         {
             SetProxyLastExitCode(psStdin, nativeDirectExitCode);
             continue;
@@ -1346,19 +1350,19 @@ static bool StartsWithWslCommand(string line)
 static bool IsWslHeredocStart(string command)
 {
     return StartsWithWslCommand(command) &&
-        Regex.IsMatch(command, @"<<\s*['""]?[A-Za-z_][A-Za-z0-9_]*['""]?", RegexOptions.IgnoreCase);
+        Regex.IsMatch(command, @"<<-?\s*['""]?[A-Za-z_][A-Za-z0-9_]*['""]?", RegexOptions.IgnoreCase);
 }
 
 static bool IsWslHeredocComplete(string command)
 {
-    var match = Regex.Match(command, @"<<\s*['""]?(?<marker>[A-Za-z_][A-Za-z0-9_]*)['""]?", RegexOptions.IgnoreCase);
+    var match = Regex.Match(command, @"<<-?\s*['""]?(?<marker>[A-Za-z_][A-Za-z0-9_]*)['""]?", RegexOptions.IgnoreCase);
     if (!match.Success)
     {
         return false;
     }
 
     var marker = Regex.Escape(match.Groups["marker"].Value);
-    if (!Regex.IsMatch(command, @"(?m)^\s*" + marker + @"\s*$"))
+    if (!Regex.IsMatch(command, @"(?m)^[ \t]*" + marker + @"\s*$"))
     {
         return false;
     }
