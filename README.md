@@ -464,8 +464,9 @@ For Antigravity IDE, Shellfix does not patch shortcuts. Antigravity keeps normal
 - Sets `terminal.integrated.agentHostProfile.windows` to `shellfix`
 - Sets `terminal.integrated.automationProfile.windows` to the shim
 - Sets `terminal.integrated.defaultProfile.windows` to `shellfix`
+- Sets `terminal.integrated.windowsEnableConpty` to `true` so the compiled shim runs through Antigravity's modern terminal host
 
-Run `shellfix repair antigravity` to reapply these settings, or `.\install.ps1 -TestAntigravitySettings` to verify the merge path without touching real settings. If Antigravity was open during repair or reinstall, close and reopen stale windows so new agent terminals inherit the repaired settings; `shellfix doctor` reports live bypassing child processes.
+Run `shellfix repair antigravity` to reapply these settings, or `.\install.ps1 -TestAntigravitySettings` to verify the merge path without touching real settings. If Antigravity was open during repair or reinstall, close and reopen stale windows so new agent terminals inherit the repaired settings; `shellfix doctor` reports live bypassing child processes and stale ConPTY-disabled terminal mode.
 
 **Supported IDEs:**
 - Visual Studio Code / VS Code Insiders

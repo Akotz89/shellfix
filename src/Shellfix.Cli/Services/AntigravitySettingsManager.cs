@@ -50,6 +50,7 @@ internal sealed class AntigravitySettingsManager
             {
               "workbench.colorTheme": "Test Theme",
               "terminal.integrated.defaultProfile.windows": "PowerShell",
+              "terminal.integrated.windowsEnableConpty": false,
               "terminal.integrated.profiles.windows": {
                 "PowerShell": {
                   "source": "PowerShell"
@@ -66,6 +67,7 @@ internal sealed class AntigravitySettingsManager
             if (!second.Contains("\"workbench.colorTheme\": \"Test Theme\"", StringComparison.Ordinal)) { throw new InvalidOperationException("Existing settings were not preserved."); }
             if (!second.Contains("\"terminal.integrated.defaultProfile.windows\": \"shellfix\"", StringComparison.Ordinal)) { throw new InvalidOperationException("Default profile was not set."); }
             if (!second.Contains("\"terminal.integrated.agentHostProfile.windows\": \"shellfix\"", StringComparison.Ordinal)) { throw new InvalidOperationException("Agent host profile was not set."); }
+            if (!second.Contains("\"terminal.integrated.windowsEnableConpty\": true", StringComparison.Ordinal)) { throw new InvalidOperationException("ConPTY was not enabled for the shellfix terminal profile."); }
             if (!second.Contains(Jsonc.StringLiteral(shimPath), StringComparison.Ordinal)) { throw new InvalidOperationException("Shim path was not written."); }
         }
         finally
@@ -86,12 +88,17 @@ internal sealed class AntigravitySettingsManager
         var hasAgent = Regex.IsMatch(content, @"""terminal\.integrated\.agentHostProfile\.windows""\s*:\s*""shellfix""");
         var hasDefault = Regex.IsMatch(content, @"""terminal\.integrated\.defaultProfile\.windows""\s*:\s*""shellfix""");
         var hasAutomation = Regex.IsMatch(content, @"""terminal\.integrated\.automationProfile\.windows""[\s\S]*powershell\.exe");
-        var pass = hasAgent && hasDefault && hasAutomation;
+        var conptyDisabled = Regex.IsMatch(content, @"""terminal\.integrated\.windowsEnableConpty""\s*:\s*false");
+        var pass = hasAgent && hasDefault && hasAutomation && !conptyDisabled;
         return new CheckResult
         {
             Name = "antigravity",
             Status = pass ? "pass" : "fail",
-            Message = pass ? "Agent, automation, and default terminal settings route through shellfix." : "Antigravity settings are incomplete.",
+            Message = pass
+                ? "Agent, automation, and default terminal settings route through shellfix with ConPTY enabled."
+                : conptyDisabled
+                    ? "Antigravity routes through shellfix, but legacy ConPTY-disabled terminal mode is still set."
+                    : "Antigravity settings are incomplete.",
             Remediation = "Run shellfix repair antigravity."
         };
     }
@@ -121,6 +128,7 @@ internal sealed class AntigravitySettingsManager
         content = Jsonc.SetObjectProperty(content, "terminal.integrated.agentHostProfile.windows", Jsonc.StringLiteral("shellfix"));
         content = Jsonc.SetObjectProperty(content, "terminal.integrated.defaultProfile.windows", Jsonc.StringLiteral("shellfix"));
         content = Jsonc.SetObjectProperty(content, "terminal.integrated.automationProfile.windows", automationProfile.Trim());
+        content = Jsonc.SetObjectProperty(content, "terminal.integrated.windowsEnableConpty", "true");
 
         var profiles = Jsonc.FindPropertyValueRange(content, "terminal.integrated.profiles.windows");
         if (profiles is null)
