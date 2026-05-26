@@ -7,9 +7,10 @@ shellfix intentionally shadows `powershell.exe` in your IDE's PATH. This is a se
 ### What shellfix does
 
 - Classifies incoming commands as bash or PowerShell
-- Routes bash commands to WSL; passes PowerShell commands to the real `powershell.exe`
-- In session proxy mode, spawns real `powershell.exe` and rewrites only WSL commands with problematic tokens (`&&`, `[N:-N]`, nested quotes)
+- Routes explicit WSL commands directly through `wsl.exe` and passes PowerShell commands to the configured PowerShell backend
+- In session proxy mode, spawns the backend PowerShell and intercepts known fragile command shapes before PowerShell parses them, including WSL heredoc stdin, WSL/bash multiline Python, and native inline Python/Node payloads
 - Writes temporary `.ps1` scripts to `%TEMP%` for complex PS commands (deleted immediately after execution)
+- Writes temporary `.py` or `.js` files to `%TEMP%` for native inline interpreter payloads (deleted immediately after execution)
 - Installs through `shellfix.exe`, which records reversible install state in `%LOCALAPPDATA%\Shellfix\state.json`
 - **Does not** make network requests, store credentials, or access files beyond installation targets and what the intercepted command accesses
 
@@ -63,14 +64,14 @@ dotnet publish src/Shellfix.Cli/Shellfix.Cli.csproj -c Release -r win-x64 --self
 Release binaries are **not** currently code-signed. This is a planned improvement. In the meantime:
 - Always verify checksums before installing
 - Prefer building from source when possible
-- Review the C# source (`shim/PowerShellShim.cs`) — it's a single file
+- Review the C# source in `shim/`, `src/Shellfix.Core/`, and `src/Shellfix.Cli/`
 
 ## Security Considerations
 
-- In session proxy mode, the shim spawns real `powershell.exe` as a child process and forwards stdin. Only WSL commands with specific problematic tokens are rewritten; all other input passes through unchanged.
+- In session proxy mode, the shim spawns the backend PowerShell as a child process and forwards ordinary stdin. Known fragile agent command shapes are executed directly by the shim so PowerShell does not parse foreign-language payloads.
 - The profile wraps native tools by merging stderr to stdout as plain strings. This does not suppress actual errors — exit codes are preserved.
-- The shim classifier is conservative: unknown commands default to PowerShell passthrough (not WSL routing).
-- Antigravity settings repair writes only the relevant terminal profile keys and stores a backup before changing the file.
+- The shim classifier is conservative: unsupported heredoc syntax is rejected before PowerShell parses it, and unknown commands default to PowerShell file-mode execution rather than WSL routing.
+- Antigravity settings repair writes only the relevant terminal profile keys and stores a backup before changing the file. `shellfix doctor` also reports live Antigravity PowerShell child processes that bypass the installed shim.
 
 ## Reporting Vulnerabilities
 
@@ -82,8 +83,5 @@ Contact: Open a private issue on the repository or reach out via GitHub profile.
 
 | Version | Supported |
 |---|---|
-| 1.7.x | Yes (current) |
-| 1.6.x | Yes |
-| 1.5.x | Yes (session proxy, one-shot, profile) |
-| 1.3.x–1.4.x | Partial — one-shot mode only, no session proxy |
-| ≤ 1.2.x | No |
+| Current `master` / latest release | Yes |
+| Older pre-CLI releases | Best effort |

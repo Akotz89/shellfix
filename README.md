@@ -145,9 +145,10 @@ All PS commands go through `-File` mode unconditionally. This eliminates the ent
 
 **Session Proxy Mode** (interactive terminal / `terminal.sendText`): The shim spawns the PowerShell backend as a child process and proxies stdin line-by-line. Each line is inspected:
 1. Multiline `python -c` / `node -e` payloads are buffered and executed natively through temporary script files
-2. If it starts with `wsl`/`wsl.exe` and contains problematic tokens (`&&`, `||`, `[N:-N]`, nested bash quotes), PS 5.1 backends get a targeted `--%` stop-parsing rewrite
-3. PowerShell 7 backends receive the original line because `pwsh` already handles these direct WSL payloads more reliably
-4. Otherwise -> passes through unchanged
+2. Explicit `wsl` / `wsl.exe` commands are routed directly through `wsl.exe` so PowerShell does not parse bash, Python, JSON, heredoc, or `$PATH` payloads
+3. WSL heredoc stdin commands such as `wsl ... -- python3 << 'PY' ... PY` are buffered, unwrapped, and piped to WSL stdin
+4. Known native tools and full-path native calls are executed directly when Shellfix can classify them safely
+5. Otherwise -> passes through to the PowerShell backend
 
 ### Layer 2: PowerShell Profile — Bash Wrappers
 
@@ -447,7 +448,7 @@ For Antigravity IDE, Shellfix does not patch shortcuts. Antigravity keeps normal
 - Adds a `shellfix` terminal profile pointing at `C:\Users\<user>\bin\powershell.exe`
 - Sets `terminal.integrated.agentHostProfile.windows` to `shellfix`
 - Sets `terminal.integrated.automationProfile.windows` to the shim
-- Keeps `terminal.integrated.defaultProfile.windows` as `WSL Bash`
+- Sets `terminal.integrated.defaultProfile.windows` to `shellfix`
 
 Run `shellfix repair antigravity` to reapply these settings, or `.\install.ps1 -TestAntigravitySettings` to verify the merge path without touching real settings.
 
@@ -465,7 +466,7 @@ Run `shellfix repair antigravity` to reapply these settings, or `.\install.ps1 -
 # or C:\Users\<user>\bin\powershell.exe from a patched IDE shortcut.
 ```
 
-If that still points to `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`, run `shellfix doctor`. For shortcut-managed IDEs, restart from the patched shortcut or launch through `launch-ide.bat`; for Antigravity, run `shellfix repair antigravity`.
+If that still points to `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`, run `shellfix doctor`. For shortcut-managed IDEs, restart from the patched shortcut or launch through `launch-ide.bat`; for Antigravity, run `shellfix repair antigravity`, then close stale Antigravity terminals/windows and reopen them. `shellfix doctor` reports live Antigravity PowerShell child processes that still bypass the shim.
 
 **Uninstall:** `shellfix uninstall` restores recorded shortcuts, profile changes, Antigravity settings, and PATH state. `.\install.ps1 -Uninstall` forwards to the same command.
 

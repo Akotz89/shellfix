@@ -15,9 +15,15 @@ All notable changes to this project will be documented in this file.
 ### Added — Antigravity IDE agent-shell settings hardening
 - Installer now merges Antigravity IDE user settings when `settings.json` exists.
 - Adds a `shellfix` terminal profile pointing at the installed shim.
-- Sets `terminal.integrated.agentHostProfile.windows` to `shellfix` and keeps `terminal.integrated.defaultProfile.windows` on `WSL Bash`.
+- Sets `terminal.integrated.agentHostProfile.windows`, `terminal.integrated.automationProfile.windows`, and `terminal.integrated.defaultProfile.windows` to Shellfix.
 - Antigravity IDE is now settings-managed: Shellfix leaves Antigravity shortcuts as direct `Antigravity IDE.exe` shortcuts and removes stale launcher sidecars on reinstall.
 - Adds `install.ps1 -TestAntigravitySettings` for an idempotent temp-file merge test and `-SkipAntigravitySettings` to opt out.
+- `shellfix doctor` now reports live Antigravity PowerShell child processes that bypass the installed shim, which catches stale terminals/windows opened before repair or reinstall.
+
+### Fixed — Agent-first WSL command shapes
+- Explicit `wsl` / `wsl.exe` commands now route directly through the shim before PowerShell can parse nested bash, Python, JSON, heredoc, or `$PATH` payloads.
+- Session proxy mode buffers WSL heredoc stdin payloads and pipes the body to WSL stdin, covering `wsl ... -- python3 << 'PY' ... PY` and Node equivalents.
+- Added incident route fixtures and replay coverage for WSL/bash multiline Python `-c`, JSON payloads, heredoc stdin, native inline Python/Node, native stderr false failures, and stale Antigravity shell bypass detection.
 
 ### Fixed — pwsh 7 proxy quoting regression
 - Session proxy no longer injects `--%` into problematic WSL commands when the backend is PowerShell 7.
