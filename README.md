@@ -92,18 +92,23 @@ flowchart TD
         direction TB
         ONESHOT["One-Shot Mode"]
         PROXY["Session Proxy Mode"]
-        CLS["Heuristic Classifier"]
-        REWRITE["Stdin Rewriter"]
-        ONESHOT --> CLS
-        PROXY --> REWRITE
-        CLS --> |"Bash syntax"| BASH
-        CLS --> |"PowerShell"| FILE
-        REWRITE --> |"WSL + problematic tokens on PS 5.1"| INJECT["Inject --% stop-parsing"]
-        REWRITE --> |"WSL + problematic tokens on pwsh 7"| PASSTHRU
-        REWRITE --> |"Safe command"| PASSTHRU["Pass through"]
+        ROUTER["Agent-first Command Router"]
+        BUFFER["Multiline Command Buffer"]
+        ONESHOT --> ROUTER
+        PROXY --> BUFFER
+        BUFFER --> ROUTER
+        ROUTER --> |"explicit wsl / wsl.exe"| WSLDIRECT
+        ROUTER --> |"WSL heredoc/stdin"| WSLSTDIN
+        ROUTER --> |"python -c / node -e"| NATIVEINLINE
+        ROUTER --> |"known native or full path"| NATIVEDIRECT
+        ROUTER --> |"PowerShell command"| FILE
+        ROUTER --> |"ordinary interactive input"| PASSTHRU["Backend stdin"]
     end
 
-    BASH["WSL bash -c<br/>Path translation<br/>Quote/glob escaping<br/>Dollar-sign preservation"]
+    WSLDIRECT["wsl-direct<br/>ProcessStartInfo.ArgumentList<br/>PowerShell never parses payload"]
+    WSLSTDIN["wsl-direct + stdin piping<br/>Single-quoted heredoc body"]
+    NATIVEINLINE["native-inline-tempfile<br/>UTF-8 .py/.js temp file"]
+    NATIVEDIRECT["native-direct<br/>Real stdout/stderr/exit code"]
     FILE["-File mode<br/>Write temp .ps1<br/>Dot-source profile<br/>exit $LASTEXITCODE"]
 
     subgraph REAL["pwsh 7 (preferred) or PS 5.1 + Profile"]
@@ -113,18 +118,19 @@ flowchart TD
     end
 
     FILE --> REAL
-    INJECT --> REAL
     PASSTHRU --> REAL
 
     style IDE fill:#1a1a2e,stroke:#e94560,color:#eee
     style SHIM fill:#16213e,stroke:#0f3460,color:#eee
     style ONESHOT fill:#0f3460,stroke:#53779a,color:#eee
     style PROXY fill:#0f3460,stroke:#53779a,color:#eee
-    style CLS fill:#0f3460,stroke:#53779a,color:#eee
-    style REWRITE fill:#0f3460,stroke:#53779a,color:#eee
-    style INJECT fill:#1a472a,stroke:#2d6a4f,color:#eee
+    style ROUTER fill:#0f3460,stroke:#53779a,color:#eee
+    style BUFFER fill:#0f3460,stroke:#53779a,color:#eee
+    style WSLDIRECT fill:#1a472a,stroke:#2d6a4f,color:#eee
+    style WSLSTDIN fill:#1a472a,stroke:#2d6a4f,color:#eee
+    style NATIVEINLINE fill:#1a472a,stroke:#2d6a4f,color:#eee
+    style NATIVEDIRECT fill:#1a472a,stroke:#2d6a4f,color:#eee
     style PASSTHRU fill:#16213e,stroke:#0f3460,color:#eee
-    style BASH fill:#1a472a,stroke:#2d6a4f,color:#eee
     style FILE fill:#4a3728,stroke:#8b6914,color:#eee
     style REAL fill:#1b1b3a,stroke:#6c63ff,color:#eee
     style L2 fill:#2d2d5e,stroke:#6c63ff,color:#eee
@@ -136,12 +142,13 @@ flowchart TD
 A .NET 8 executable named `powershell.exe` configured as the IDE's terminal shell. It prefers **PowerShell 7** (`pwsh.exe`) as its backend when available, falling back to PS 5.1 automatically. It operates in two modes:
 
 **One-Shot Mode** (`powershell -Command "..."`): The shim classifies the command:
-1. **Native inline tools** -> runs `python -c`, `python3 -c`, `py -c`, and `node -e` through temporary script files so PowerShell never parses the code body
-2. **Bash syntax** -> translates paths, routes to `wsl.exe -- bash -c`
-3. **PowerShell** -> writes to a temp `.ps1` file with profile dot-source and `exit $LASTEXITCODE`, runs with `-File` (bypasses parser entirely)
-4. **Falls back** to real PowerShell if WSL crashes
+1. **Explicit WSL** -> runs `wsl` / `wsl.exe` directly with structured arguments so PowerShell never parses bash, Python, JSON, heredoc, or `$PATH` payloads
+2. **WSL heredoc/stdin** -> unwraps supported heredoc wrappers and pipes the body to WSL stdin
+3. **Native inline tools** -> runs `python -c`, `python3 -c`, `py -c`, and `node -e` through temporary script files so PowerShell never parses the code body
+4. **Known native tools** -> runs resolved Windows tools directly when Shellfix can classify them safely
+5. **PowerShell** -> writes to a temp `.ps1` file with profile dot-source and `exit $LASTEXITCODE`, runs with `-File`
 
-All PS commands go through `-File` mode unconditionally. This eliminates the entire class of quoting and escaping failures — the `.ps1` file content is read as-is with no quote interpretation.
+PowerShell commands go through `-File` mode instead of `-Command`. This eliminates the command-line quote interpretation layer for PowerShell payloads while preserving normal PowerShell semantics for commands Shellfix cannot confidently route elsewhere.
 
 **Session Proxy Mode** (interactive terminal / `terminal.sendText`): The shim spawns the PowerShell backend as a child process and proxies stdin line-by-line. Each line is inspected:
 1. Multiline `python -c` / `node -e` payloads are buffered and executed natively through temporary script files
@@ -413,15 +420,23 @@ PYEOF
 
 Single-quoted heredoc markers (`<< 'PYEOF'`) pass content verbatim — no escaping layer applies.
 
-### Session Proxy (v1.5.0+)
+### Session Proxy
 
-Since v1.5.0, the shim intercepts **both** one-shot (`-Command`) and interactive (stdin) invocations. When configured as the IDE's terminal shell, it spawns real `powershell.exe` as a child and proxies every stdin line through `RewriteForProxy()`. This means `&&`, `[1:-1]`, and nested quotes in WSL commands are fixed transparently — even when the IDE sends them via `terminal.sendText()` into a persistent session.
+The shim intercepts **both** one-shot (`-Command`) and interactive (stdin) invocations. When configured as the IDE's terminal shell, it spawns the configured PowerShell backend as a child process, but it first brokers high-risk agent command shapes itself:
+
+- explicit `wsl` / `wsl.exe` commands route as `wsl-direct` through structured process arguments;
+- WSL heredoc/stdin commands are buffered until the terminator is seen, then the body is piped to WSL stdin;
+- multiline `python -c`, `python3 -c`, `py -c`, and `node -e` payloads are buffered and executed through temporary `.py` or `.js` files;
+- known native tools and full-path native executables run directly when Shellfix can classify them safely;
+- ordinary PowerShell input still flows to the backend session.
+
+`RewriteForProxy()` remains a legacy compatibility fallback for older proxy behavior. It is no longer the main reliability path for agent command execution, and `--%` stop-parsing injection is not the primary fix.
 
 For this to work, the IDE must be configured to launch the shim binary as its terminal profile (not the system `powershell.exe`).
 
-### Agent `run_command` Interception (v1.5.2+)
+### Agent Command Interception
 
-VS Code-based IDEs' agent `run_command` tool bypasses all terminal settings — it spawns bare `powershell` directly from the Go language server binary. The shim is only found if the shim directory comes before `C:\Windows\System32\WindowsPowerShell\v1.0\` in PATH.
+Some VS Code-based IDE agent runners spawn bare `powershell` from helper processes instead of using the visible terminal profile. Shellfix handles that by installing the compatibility shim path early enough for IDE child processes to resolve it, while Antigravity is handled through explicit terminal profile settings. Run `shellfix doctor` to catch live PowerShell child processes that bypass the installed shim.
 
 **Automatic setup** — the installer handles this:
 ```powershell
@@ -450,7 +465,7 @@ For Antigravity IDE, Shellfix does not patch shortcuts. Antigravity keeps normal
 - Sets `terminal.integrated.automationProfile.windows` to the shim
 - Sets `terminal.integrated.defaultProfile.windows` to `shellfix`
 
-Run `shellfix repair antigravity` to reapply these settings, or `.\install.ps1 -TestAntigravitySettings` to verify the merge path without touching real settings.
+Run `shellfix repair antigravity` to reapply these settings, or `.\install.ps1 -TestAntigravitySettings` to verify the merge path without touching real settings. If Antigravity was open during repair or reinstall, close and reopen stale windows so new agent terminals inherit the repaired settings; `shellfix doctor` reports live bypassing child processes.
 
 **Supported IDEs:**
 - Visual Studio Code / VS Code Insiders

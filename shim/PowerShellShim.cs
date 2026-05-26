@@ -1174,8 +1174,10 @@ static List<string> ParseCommandArgs(string input)
 
 /// <summary>
 /// Spawns real powershell.exe as a child process with stdin redirected.
-/// Each line from our stdin is inspected by RewriteForProxy() before
-/// being sent to PS. Stdout and stderr pass through transparently.
+/// High-risk agent command shapes are buffered and executed directly by
+/// the shim before PowerShell can parse them. Ordinary stdin is forwarded
+/// to the backend session. RewriteForProxy() is retained as a legacy
+/// fallback for older PS 5.1 WSL lines.
 /// </summary>
 static int RunInteractiveProxy(string[] originalArgs, bool debug)
 {
@@ -1389,6 +1391,8 @@ static bool IsBufferedCommandComplete(string command)
 }
 
 /// <summary>
+/// Legacy compatibility fallback.
+///
 /// Inspects a single line of stdin and rewrites it if it contains
 /// WSL/bash commands with PS 5.1-problematic tokens.
 ///

@@ -2,6 +2,8 @@
 
 All notable changes to this project will be documented in this file.
 
+Current unreleased behavior supersedes older v1.5 proxy notes below: Shellfix is now an agent-first router for explicit WSL, heredoc/stdin, native inline interpreter, and known native command shapes. Older `RewriteForProxy()` / `--%` entries are retained as release history, not current product guidance.
+
 ## [Unreleased]
 
 ### Added — Commercial installer management CLI
