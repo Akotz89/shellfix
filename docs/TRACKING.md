@@ -19,6 +19,18 @@ This map keeps GitHub issues, Linear issues, and release/doc state aligned.
 | #17 Reduce AI smell | OPE-120 | Closed by PR #27 | Public docs wording pass |
 | #18 Hallucination guardrails | OPE-121 | Closed by PR #27 | Claim evidence inventory and release-note guidance |
 | #29 GitHub Actions runner deprecation notices | OPE-122 | Closed by PR #30 | CI pinned to `windows-2025`; JavaScript actions opted into Node 24 |
+| PR #38 Add Antigravity run_command guard | AZR-142 | In Progress | PR #38 is open and mergeable; its current GitHub status check is the source of truth for the release-candidate head. Release/tag/checksum evidence is still required before closure. |
+
+## Current Release Candidate Notes
+
+- Latest public release is `v1.7.1`; the Antigravity guard is not in a published release asset yet.
+- PR #38 (`release/shellfix-antigravity-guard`) is open and mergeable; verify the current head's CI run before merge.
+- Latest remote CI on `master` is green, but it does not include PR #38 until merge.
+- Current release candidate ships `shellfix guard antigravity-run-command`, a first-class Antigravity PreToolUse guard for fragile inline WSL/bash command shapes.
+- `AZR-142` has current PR, CI, local verification, and installed-runtime evidence as of 2026-06-02.
+- Local Antigravity `run_command` hooks on Aaron's machine now call the installed Shellfix guard directly, but that local hook wiring is machine configuration rather than published release evidence.
+- `AZR-132` has a clarification comment separating the completed shim-bypass fix from the current inline command-shape limitation.
+- Do not close `AZR-142` until GitHub PR/CI/release evidence proves the guard shipped and the README hook instructions are included in the release.
 
 ## Manual Reconciliation
 

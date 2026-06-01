@@ -248,7 +248,7 @@ Run-ProxyTest "python in bash" "wsl -d $WslDistro -- bash -c ""python3 -c 'print
 
 # --- Full-path native executable calls ---
 Write-Host "`nFull-path native direct:" -ForegroundColor Cyan
-$d2Path = (where.exe d2 2>$null | Select-Object -First 1)
+$d2Path = (Get-Command d2 -CommandType Application -ErrorAction SilentlyContinue).Source
 if (-not $d2Path -and (Test-Path 'C:\Program Files\D2\d2.exe')) {
     $d2Path = 'C:\Program Files\D2\d2.exe'
 }
@@ -265,7 +265,7 @@ try {
     Remove-Item -LiteralPath $d2Input, $d2Output -ErrorAction SilentlyContinue
 }
 
-$dotPath = (where.exe dot 2>$null | Select-Object -First 1)
+$dotPath = (Get-Command dot -CommandType Application -ErrorAction SilentlyContinue).Source
 if (-not $dotPath -and (Test-Path 'C:\Program Files\Graphviz\bin\dot.exe')) {
     $dotPath = 'C:\Program Files\Graphviz\bin\dot.exe'
 }

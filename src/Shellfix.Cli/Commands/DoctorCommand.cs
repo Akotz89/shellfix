@@ -260,7 +260,7 @@ $children
 
     private static string ResolveWindowsCommand(string tool)
     {
-        return ResolveWindowsCommands(tool).FirstOrDefault() ?? "";
+        return ResolveWindowsCommands(tool).FirstOrDefault() ?? new NativeToolResolver().Resolve(tool) ?? "";
     }
 
     private static List<string> ResolveWindowsCommands(string tool)
@@ -282,12 +282,24 @@ $children
             var stdout = process.StandardOutput.ReadToEnd();
             process.WaitForExit(3000);
             if (process.ExitCode != 0) { return []; }
-            return stdout.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries).ToList();
+            return stdout.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
+                .Where(IsExecutablePath)
+                .ToList();
         }
         catch
         {
             return [];
         }
+    }
+
+    private static bool IsExecutablePath(string path)
+    {
+        var extension = Path.GetExtension(path);
+        return extension.Equals(".exe", StringComparison.OrdinalIgnoreCase) ||
+            extension.Equals(".cmd", StringComparison.OrdinalIgnoreCase) ||
+            extension.Equals(".bat", StringComparison.OrdinalIgnoreCase) ||
+            extension.Equals(".com", StringComparison.OrdinalIgnoreCase) ||
+            extension.Equals(".ps1", StringComparison.OrdinalIgnoreCase);
     }
 
     private static string BuildRefreshedPath()

@@ -13,6 +13,8 @@ Current unreleased behavior supersedes older v1.5 proxy notes below: Shellfix is
 - Replaced the large PowerShell installer body with a compatibility bootstrapper that builds or locates `shellfix.exe` and forwards legacy flags.
 - Organized CLI code into command, service, model, utility, and test-support files instead of one large entrypoint.
 - Release and CI workflows now build and publish both `powershell.exe` and `shellfix.exe`.
+- CI now runs the full `shellfix.exe test` self-test bundle, including the Antigravity run_command guard.
+- CI and release workflows now use Node 24-native action majors (`actions/checkout@v6`, `actions/setup-dotnet@v5`, `actions/upload-artifact@v7`, and `softprops/action-gh-release@v3`) instead of forcing older Node 20 actions onto Node 24, and target the explicit `windows-2025-vs2026` runner image during GitHub's Windows image migration.
 
 ### Added — Antigravity IDE agent-shell settings hardening
 - Installer now merges Antigravity IDE user settings when `settings.json` exists.
@@ -20,6 +22,7 @@ Current unreleased behavior supersedes older v1.5 proxy notes below: Shellfix is
 - Sets `terminal.integrated.agentHostProfile.windows`, `terminal.integrated.automationProfile.windows`, and `terminal.integrated.defaultProfile.windows` to Shellfix.
 - Sets `terminal.integrated.windowsEnableConpty` to `true` and reports stale ConPTY-disabled terminal mode in `shellfix doctor`.
 - Antigravity IDE is now settings-managed: Shellfix leaves Antigravity shortcuts as direct `Antigravity IDE.exe` shortcuts and removes stale launcher sidecars on reinstall.
+- Added `shellfix guard antigravity-run-command`, a PreToolUse-compatible JSON guard that blocks fragile inline WSL/bash `run_command` payloads before Windows/PowerShell can pre-parse bash variables.
 - Adds `install.ps1 -TestAntigravitySettings` for an idempotent temp-file merge test and `-SkipAntigravitySettings` to opt out.
 - `shellfix doctor` now reports live Antigravity PowerShell child processes that bypass the installed shim, which catches stale terminals/windows opened before repair or reinstall.
 
@@ -40,6 +43,18 @@ Current unreleased behavior supersedes older v1.5 proxy notes below: Shellfix is
 - `shellfix doctor` now reports resolved native paths for `python`, `python3`, `node`, and `npx`.
 - The profile refreshes PATH from persisted User/Machine environment entries so newly installed tools such as Winget-installed D2 are visible without restarting the IDE.
 - `d2` is wrapped as a native tool so its `success:`/`info:` stderr messages are normalized instead of looking like command failures to agents.
+- Native tool resolution now has Windows fallback locations for `git`, `gh`, `dotnet`, `wsl`, `node`, `npm`, `npx`, `python`, and `py` when a launched IDE inherited a stale PATH.
+- `npm` and `npx` now prefer the nvm4w shims and execute through Node's CLI entrypoints directly, avoiding extensionless `npx` and duplicate npm shim recursion.
+- `shellfix doctor` filters `where.exe` output to executable paths and falls back to Shellfix's native resolver, so native-tool diagnostics match runtime behavior more closely.
+
+### Improved — Antigravity settings coverage
+- Antigravity settings repair now covers both `Antigravity IDE` and `Antigravity` settings trees when both exist.
+- Install state can record multiple Antigravity settings backups and restores all recorded settings files during uninstall.
+- Backup lookup now keys settings backups by source path hash instead of only filename, avoiding collisions between multiple `settings.json` files.
+
+### Known limitation — Antigravity inline `run_command` payloads
+- `shellfix doctor` verifies Shellfix install, PATH, Antigravity settings, and live PowerShell child-process state. It does not prove that every Antigravity `run_command` payload reached the shim before Windows/PowerShell parsed the string.
+- Fragile inline shapes such as `wsl -d Ubuntu-24.04 -- bash -c 'for f in ...; do echo "$f"; done'` can still be mangled if Antigravity submits them through a path that pre-parses the command. Shellfix now ships `shellfix guard antigravity-run-command` so Antigravity hooks can block those shapes and force scratch `.sh` scripts before the command reaches the unsafe parser path.
 
 ---
 

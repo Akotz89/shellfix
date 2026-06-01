@@ -15,6 +15,7 @@ internal sealed class InstallState
     public bool AddedBinToPath { get; set; }
     public ProfilePatchState? Profile { get; set; }
     public SettingsPatchState? AntigravitySettings { get; set; }
+    public List<SettingsPatchState> AntigravitySettingsPatches { get; set; } = [];
     public List<ShortcutPatchState> Shortcuts { get; set; } = [];
 
     public static InstallState Create(ShellfixContext context, string binDir, string wslDistro) =>

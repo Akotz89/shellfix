@@ -15,18 +15,36 @@ internal static class Backup
     {
         if (state.Profile is not null)
         {
-            var oldest = FindOldest(context, "profile", Path.GetFileName(state.Profile.ProfilePath));
+            var oldest = FindOldestByFileName(context, "profile", Path.GetFileName(state.Profile.ProfilePath));
             if (oldest is not null) { state.Profile.BackupPath = oldest; }
         }
 
         if (state.AntigravitySettings is not null)
         {
-            var oldest = FindOldest(context, "settings", Path.GetFileName(state.AntigravitySettings.SettingsPath));
+            var oldest = FindOldest(context, "settings", state.AntigravitySettings.SettingsPath);
             if (oldest is not null) { state.AntigravitySettings.BackupPath = oldest; }
+        }
+
+        foreach (var patch in state.AntigravitySettingsPatches)
+        {
+            var oldest = FindOldest(context, "settings", patch.SettingsPath);
+            if (oldest is not null) { patch.BackupPath = oldest; }
         }
     }
 
-    private static string? FindOldest(ShellfixContext context, string category, string fileName)
+    private static string? FindOldest(ShellfixContext context, string category, string source)
+    {
+        var dir = Path.Combine(context.BackupRoot, category);
+        if (!Directory.Exists(dir)) { return null; }
+        return Directory.EnumerateFiles(dir, "*-" + Hashing.Short(source) + "-" + Path.GetFileName(source))
+            .Select(path => new FileInfo(path))
+            .OrderBy(file => file.CreationTimeUtc)
+            .ThenBy(file => file.Name, StringComparer.OrdinalIgnoreCase)
+            .Select(file => file.FullName)
+            .FirstOrDefault();
+    }
+
+    private static string? FindOldestByFileName(ShellfixContext context, string category, string fileName)
     {
         var dir = Path.Combine(context.BackupRoot, category);
         if (!Directory.Exists(dir)) { return null; }

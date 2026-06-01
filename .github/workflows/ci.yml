@@ -7,20 +7,22 @@ on:
     branches: [master, main]
 
 env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  DOTNET_NOLOGO: true
 
 jobs:
   build:
-    runs-on: windows-2025
-    
+    runs-on: windows-2025-vs2026
+    permissions:
+      contents: read
+
     steps:
-      - uses: actions/checkout@v4
-      
+      - uses: actions/checkout@v6
+
       - name: Setup .NET 8
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v5
         with:
           dotnet-version: '8.0.x'
-      
+
       - name: Build shim
         run: dotnet publish shim/PowerShellShim.csproj -c Release -o shim/out --nologo
 
@@ -34,7 +36,7 @@ jobs:
             -p:IncludeNativeLibrariesForSelfExtract=true `
             -o src/Shellfix.Cli/out `
             --nologo
-      
+
       - name: Verify build output
         run: |
           if (Test-Path "shim/out/powershell.exe") {
@@ -52,11 +54,11 @@ jobs:
         shell: pwsh
 
       - name: Run CLI self-tests
-        run: .\src\Shellfix.Cli\out\shellfix.exe test --antigravity-settings
+        run: .\src\Shellfix.Cli\out\shellfix.exe test
         shell: pwsh
-      
+
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: shellfix-binaries
           path: |
