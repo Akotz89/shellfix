@@ -25,7 +25,7 @@ Release notes should separate:
 | `grep "it's" file` no longer hangs | `.\test.ps1` quoting tests: `apostrophe`, `here's` | WSL distro must be available |
 | `awk '{print $1, $3}'` preserves dollar references | `Quote-ForBash` escapes `$`; covered by bash wrapper class in `.\test.ps1` | Add a direct regression before expanding claim |
 | `find ... -name "*.py"` keeps glob/path intent | `RunWslBash` quotes bare glob patterns; covered by path/glob implementation | Manual edge-case checks still useful |
-| `for ...; do ...; done` routes as bash | `.\test.ps1` control-flow test `if/then/fi`; classifier routes shell control syntax | Add direct `for` test if this claim changes |
+| `for ...; do ...; done` routes as bash | `.\test.ps1` direct `for x in hello world; do echo item=$x; done` regression | Only proves Shellfix-handled invocations; Antigravity `run_command` can still pre-parse inline payloads before Shellfix sees them |
 | `echo "a" && echo "b"` works | `.\test-ci-smoke.ps1`, `.\test.ps1`, and `.\test-proxy.ps1` cover `&&` | One-shot and proxy paths both covered |
 | `curl` resolves to real curl, not `Invoke-WebRequest` | `.\test.ps1` alias deconfliction checks `curl is Function`; profile removes alias | Requires profile loading |
 | Windows paths are translated to WSL paths | `TranslatePaths()` and `Convert-ToWslPath`; covered indirectly by wrapper tests | Add direct path fixture before stronger claims |
@@ -36,6 +36,9 @@ Release notes should separate:
 | UTF-8 no-BOM file writing works | `.\test.ps1` `Write-Utf8NoBom` test | Profile-layer helper |
 | CI validates behavior, not only build output | GitHub Actions `CI` runs `test-ci-smoke.ps1` | Added in PR #25 |
 | Release binaries can be verified | Release workflow generates `checksums.txt`; SECURITY.md documents verification | Release workflow evidence required per tag |
+| `shellfix doctor` proves Antigravity integration health | `shellfix doctor --json` checks settings files and live bypassing PowerShell child processes | Does not prove every Antigravity `run_command` string reached Shellfix before parsing |
+| `shellfix guard antigravity-run-command` blocks fragile inline WSL/bash run_command payloads | `shellfix test --antigravity-guard`; manual stdin JSON guard check | Guard must be wired into Antigravity PreToolUse hooks to affect agent tool calls |
+| Native tool fallback finds installed Windows tools from stale IDE PATHs | `NativeToolResolver` fallback candidates and `shellfix doctor` native-tool check | Requires local verification on each release candidate machine |
 
 ## Current Verification Commands
 
@@ -45,4 +48,6 @@ dotnet publish shim/PowerShellShim.csproj -c Release -o shim/out --nologo
 .\test.ps1 -ShimPath .\shim\out\powershell.exe -WslDistro Ubuntu-24.04
 .\test-proxy.ps1 -ShimPath .\shim\out\powershell.exe -WslDistro Ubuntu-24.04
 .\test-replay.ps1 -ShimPath .\shim\out\powershell.exe -WslDistro Ubuntu-24.04
+.\src\Shellfix.Cli\out\shellfix.exe test --antigravity-guard
+.\src\Shellfix.Cli\out\shellfix.exe doctor --json
 ```

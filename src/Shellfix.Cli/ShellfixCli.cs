@@ -26,6 +26,7 @@ internal sealed class ShellfixCli
             "status" => new StatusCommand(_context).Run(CommandOptions.Parse(rest)),
             "doctor" => new DoctorCommand(_context).Run(CommandOptions.Parse(rest)),
             "explain" => new ExplainCommand(_context).Run(rest),
+            "guard" => new GuardCommand().Run(rest),
             "repair" => new RepairCommand(_context).Run(rest),
             "test" => new TestCommand(_context).Run(CommandOptions.Parse(rest)),
             _ => Unknown(command)
@@ -55,8 +56,9 @@ internal sealed class ShellfixCli
           shellfix status [--json]
           shellfix doctor [--json]
           shellfix explain [--json] "<command>"
+          shellfix guard antigravity-run-command [--command "<command>"]
           shellfix repair antigravity
-          shellfix test [--antigravity-settings] [--shortcuts] [--incidents] [--fixture <path>]
+          shellfix test [--antigravity-settings] [--antigravity-guard] [--shortcuts] [--incidents] [--fixture <path>]
 
         Compatibility:
           install.ps1 remains as a bootstrapper and forwards legacy flags to this CLI.

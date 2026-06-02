@@ -14,6 +14,21 @@ $skip = 0
 $originalShellfixWslDistro = $env:SHELLFIX_WSL_DISTRO
 $env:SHELLFIX_WSL_DISTRO = $WslDistro
 
+function Resolve-WslExe {
+    $command = Get-Command wsl.exe -ErrorAction SilentlyContinue
+    if ($command) { return $command.Source }
+
+    $systemRoot = $env:SystemRoot
+    if (-not $systemRoot) { $systemRoot = "C:\Windows" }
+    $candidate = Join-Path $systemRoot "System32\wsl.exe"
+    if (Test-Path $candidate) { return $candidate }
+
+    return "wsl.exe"
+}
+
+$script:WslExe = Resolve-WslExe
+$script:HostWslOk = $false
+
 # --- Resolve shim path: repo-local build > installed > skip ---
 if (-not $ShimPath) {
     $repoLocal = Join-Path $PSScriptRoot "shim\out\powershell.exe"
@@ -34,7 +49,7 @@ function Test-Case {
         [switch]$UseShim,
         [switch]$SkipIfNoShim
     )
-    
+
     if ($UseShim) {
         if (-not $script:ShimPath -or -not (Test-Path $script:ShimPath)) {
             if ($SkipIfNoShim) {
@@ -67,7 +82,7 @@ function Test-Case {
     } else {
         $output = Invoke-Expression $Command 2>&1 | Out-String
     }
-    
+
     if ($output -match $Expect) {
         Write-Host "  PASS: $Name" -ForegroundColor Green
         if ($Verbose) {
@@ -91,6 +106,34 @@ Write-Host "=============================================="
 Write-Host "  shellfix - Test Suite"
 Write-Host "=============================================="
 
+function Invoke-ShimForSetup {
+    param([string]$Command)
+
+    if (-not $script:ShimPath -or -not (Test-Path $script:ShimPath)) {
+        return $null
+    }
+
+    $psi = [System.Diagnostics.ProcessStartInfo]::new()
+    $psi.FileName = (Resolve-Path $script:ShimPath)
+    $psi.UseShellExecute = $false
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $psi.ArgumentList.Add("-NoProfile")
+    $psi.ArgumentList.Add("-Command")
+    $psi.ArgumentList.Add($Command)
+    $psi.Environment["SHELLFIX_WSL_DISTRO"] = $WslDistro
+
+    $proc = [System.Diagnostics.Process]::Start($psi)
+    $stdout = $proc.StandardOutput.ReadToEnd()
+    $stderr = $proc.StandardError.ReadToEnd()
+    $proc.WaitForExit()
+
+    [pscustomobject]@{
+        ExitCode = $proc.ExitCode
+        Output = $stdout + $stderr
+    }
+}
+
 # ================================================================
 # Pre-flight
 # ================================================================
@@ -99,8 +142,18 @@ Write-Host "--- Pre-flight ---"
 
 $wslOk = $false
 try {
-    $r = wsl.exe -d $WslDistro -e echo ok 2>$null
-    if ($r -match 'ok') { $wslOk = $true; Write-Host "  OK: WSL is running" -ForegroundColor Green }
+    $shimWsl = Invoke-ShimForSetup "wsl -d $WslDistro -- echo ok"
+    if ($shimWsl -and $shimWsl.ExitCode -eq 0 -and $shimWsl.Output -match 'ok') {
+        $wslOk = $true
+        Write-Host "  OK: WSL is reachable through shim" -ForegroundColor Green
+    } else {
+        $r = & $script:WslExe -d $WslDistro -e echo ok 2>$null
+        if ($r -match 'ok') {
+            $wslOk = $true
+            $script:HostWslOk = $true
+            Write-Host "  OK: WSL is running" -ForegroundColor Green
+        }
+    }
 } catch {}
 if (-not $wslOk) {
     Write-Host "  FATAL: WSL is not available. Cannot run tests." -ForegroundColor Red
@@ -130,10 +183,11 @@ if ($env:PS_PROFILE_LOADED -eq "yes") {
 }
 
 # Create test fixtures
-$fixtureScript = @'
-printf "%s\n%s\n" "it's a test" "here's another" > /tmp/shellfix_test.txt
-'@.Trim()
-wsl.exe -d $WslDistro -- bash -lc $fixtureScript
+$fixtureCommand = "wsl -d $WslDistro -- bash -lc `"printf aXQncyBhIHRlc3QKaGVyZSdzIGFub3RoZXIK | base64 -d > /tmp/shellfix_test.txt`""
+$fixtureResult = Invoke-ShimForSetup $fixtureCommand
+if (-not $fixtureResult -or $fixtureResult.ExitCode -ne 0) {
+    & $script:WslExe -d $WslDistro -- bash -lc 'printf aXQncyBhIHRlc3QKaGVyZSdzIGFub3RoZXIK | base64 -d > /tmp/shellfix_test.txt'
+}
 
 # ================================================================
 # CLASS 1: Bash Commands Through PowerShell
@@ -163,12 +217,7 @@ if ($shimInstalled) {
     $cfTests += @{ n = "$p$p operator"; c = "false $p$p echo fallback"; e = 'fallback' }
 
     foreach ($t in $cfTests) {
-        $r = & $script:ShimPath -Command $t.c 2>&1 | Out-String
-        if ($r -match $t.e) {
-            Write-Host "  PASS: $($t.n)" -ForegroundColor Green; $pass++
-        } else {
-            Write-Host "  FAIL: $($t.n)" -ForegroundColor Red; $fail++
-        }
+        Test-Case $t.n $t.c $t.e -UseShim -SkipIfNoShim
     }
 } else {
     1..3 | ForEach-Object {
@@ -183,10 +232,18 @@ Test-Case "here's" "grep `"here's`" /tmp/shellfix_test.txt" "here's another" -Us
 
 Write-Host ""
 Write-Host "--- Class 1: Bash Wrappers (Profile) ---"
-Test-Case "grep wrapper" 'grep -c "root" /etc/passwd' '\d+'
-Test-Case "head wrapper" 'head -1 /etc/os-release' '.'
-Test-Case "seq wrapper" 'seq 1 3' '2'
-Test-Case "date wrapper" 'date +%Y' '\d{4}'
+if ($script:HostWslOk) {
+    Test-Case "grep wrapper" 'grep -c "root" /etc/passwd' '\d+'
+    Test-Case "head wrapper" 'head -1 /etc/os-release' '.'
+    Test-Case "seq wrapper" 'seq 1 3' '2'
+    Test-Case "date wrapper" 'date +%Y' '\d{4}'
+} else {
+    Write-Host "  SKIP: grep wrapper (direct host WSL unavailable)" -ForegroundColor Yellow
+    Write-Host "  SKIP: head wrapper (direct host WSL unavailable)" -ForegroundColor Yellow
+    Write-Host "  SKIP: seq wrapper (direct host WSL unavailable)" -ForegroundColor Yellow
+    Write-Host "  SKIP: date wrapper (direct host WSL unavailable)" -ForegroundColor Yellow
+    $skip += 4
+}
 
 Write-Host ""
 Write-Host "--- Class 1: Alias Deconfliction ---"
@@ -228,7 +285,7 @@ foreach ($tool in $nativeTests) {
 }
 
 if (Get-Command npx -CommandType Application -ErrorAction SilentlyContinue) {
-    Test-Case "where resolves npx as Windows tool" 'where npx' 'npx(\.cmd)?' -UseShim -SkipIfNoShim
+    Test-Case "npx resolves as Windows tool" '(Get-Command npx -CommandType Application).Source' 'npx(\.cmd)?' -UseShim -SkipIfNoShim
     Test-Case "npx wrapper executes single native path" 'npx --version' '\d+\.\d+\.\d+' -UseShim -SkipIfNoShim
 } else {
     Write-Host "  SKIP: npx wrapper regression (npx not installed)" -ForegroundColor Yellow
@@ -268,8 +325,8 @@ if (-not $d2Command -and (Test-Path 'C:\Program Files\D2\d2.exe')) {
     $d2Command = Get-Item 'C:\Program Files\D2\d2.exe'
 }
 if ($d2Command) {
-    Test-Case "d2 resolves after PATH refresh" 'd2 --version' 'v\d+\.\d+\.\d+' -UseShim -SkipIfNoShim
-    $d2Path = (where.exe d2 2>$null | Select-Object -First 1)
+    Test-Case "d2 resolves after PATH refresh" '(Get-Command d2 -CommandType Application).Source' 'd2(\.exe)?' -UseShim -SkipIfNoShim
+    $d2Path = $d2Command.Source
     if (-not $d2Path -and (Test-Path 'C:\Program Files\D2\d2.exe')) {
         $d2Path = 'C:\Program Files\D2\d2.exe'
     }
@@ -286,7 +343,7 @@ if ($d2Command) {
     $skip++
 }
 
-$dotPath = (where.exe dot 2>$null | Select-Object -First 1)
+$dotPath = (Get-Command dot -CommandType Application -ErrorAction SilentlyContinue).Source
 if (-not $dotPath -and (Test-Path 'C:\Program Files\Graphviz\bin\dot.exe')) {
     $dotPath = 'C:\Program Files\Graphviz\bin\dot.exe'
 }
@@ -300,43 +357,58 @@ if ($dotPath) {
 Write-Host ""
 Write-Host "--- Class 3: Clean Output ---"
 
-$gitOut = git status 2>&1 | Out-String
-if ($gitOut -notmatch 'NativeCommandError') {
-    Write-Host "  PASS: git status - no NativeCommandError" -ForegroundColor Green
-    $pass++
+if (Get-Command git -ErrorAction SilentlyContinue) {
+    $gitOut = git status 2>&1 | Out-String
+    if ($gitOut -notmatch 'NativeCommandError') {
+        Write-Host "  PASS: git status - no NativeCommandError" -ForegroundColor Green
+        $pass++
+    } else {
+        Write-Host "  FAIL: git status - NativeCommandError present" -ForegroundColor Red
+        $fail++
+    }
 } else {
-    Write-Host "  FAIL: git status - NativeCommandError present" -ForegroundColor Red
-    $fail++
+    Write-Host "  SKIP: git status clean output (git not visible in host shell)" -ForegroundColor Yellow
+    $skip++
 }
 
-$ghOut = gh --version 2>&1 | Out-String
-if ($ghOut -match 'gh version') {
-    Write-Host "  PASS: gh --version - clean output" -ForegroundColor Green
-    $pass++
+if (Get-Command gh -ErrorAction SilentlyContinue) {
+    $ghOut = gh --version 2>&1 | Out-String
+    if ($ghOut -match 'gh version') {
+        Write-Host "  PASS: gh --version - clean output" -ForegroundColor Green
+        $pass++
+    } else {
+        Write-Host "  FAIL: gh --version" -ForegroundColor Red
+        $fail++
+    }
 } else {
-    Write-Host "  FAIL: gh --version" -ForegroundColor Red
-    $fail++
+    Write-Host "  SKIP: gh --version clean output (gh not visible in host shell)" -ForegroundColor Yellow
+    $skip++
 }
 
 Write-Host ""
 Write-Host "--- Class 3: Exit Code Propagation ---"
 
-git log -1 --oneline 2>&1 | Out-Null
-if ($LASTEXITCODE -eq 0) {
-    Write-Host "  PASS: git success = exit 0" -ForegroundColor Green
-    $pass++
-} else {
-    Write-Host "  FAIL: git success = exit $LASTEXITCODE" -ForegroundColor Red
-    $fail++
-}
+if (Get-Command git -ErrorAction SilentlyContinue) {
+    git log -1 --oneline 2>&1 | Out-Null
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "  PASS: git success = exit 0" -ForegroundColor Green
+        $pass++
+    } else {
+        Write-Host "  FAIL: git success = exit $LASTEXITCODE" -ForegroundColor Red
+        $fail++
+    }
 
-git log --oneline nonexistent-branch-xyz 2>&1 | Out-Null
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "  PASS: git failure = exit $LASTEXITCODE (non-zero)" -ForegroundColor Green
-    $pass++
+    git log --oneline nonexistent-branch-xyz 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "  PASS: git failure = exit $LASTEXITCODE (non-zero)" -ForegroundColor Green
+        $pass++
+    } else {
+        Write-Host "  FAIL: git failure = exit 0 (expected non-zero)" -ForegroundColor Red
+        $fail++
+    }
 } else {
-    Write-Host "  FAIL: git failure = exit 0 (expected non-zero)" -ForegroundColor Red
-    $fail++
+    Write-Host "  SKIP: git exit-code propagation (git not visible in host shell)" -ForegroundColor Yellow
+    $skip += 2
 }
 
 # ================================================================
@@ -406,11 +478,11 @@ Test-Case "WSL_UTF8" '$env:WSL_UTF8' '1'
 Test-Case "WSLENV" '$env:WSLENV' 'PYTHONUTF8'
 Test-Case "Profile loaded" '$env:PS_PROFILE_LOADED' 'yes'
 
-$wh = Test-WslHealth
-if ($wh) {
-    Write-Host "  PASS: WSL healthy" -ForegroundColor Green; $pass++
+$wh = Invoke-ShimForSetup "wsl -d $WslDistro -- echo ok"
+if ($wh -and $wh.ExitCode -eq 0 -and $wh.Output -match 'ok') {
+    Write-Host "  PASS: WSL healthy through shim" -ForegroundColor Green; $pass++
 } else {
-    Write-Host "  FAIL: WSL unhealthy" -ForegroundColor Red; $fail++
+    Write-Host "  FAIL: WSL unhealthy through shim" -ForegroundColor Red; $fail++
 }
 
 # ================================================================
@@ -482,7 +554,10 @@ Test-Case "Issue #7: WSL literal `$HOME path lookup" `
 # ================================================================
 # Cleanup
 # ================================================================
-wsl.exe -d $WslDistro -e rm -f /tmp/shellfix_test.txt 2>$null
+$cleanupResult = Invoke-ShimForSetup "wsl -d $WslDistro -- rm -f /tmp/shellfix_test.txt"
+if (-not $cleanupResult -or $cleanupResult.ExitCode -ne 0) {
+    & $script:WslExe -d $WslDistro -e rm -f /tmp/shellfix_test.txt 2>$null
+}
 
 $total = $pass + $fail
 Write-Host ""

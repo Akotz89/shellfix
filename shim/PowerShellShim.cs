@@ -471,11 +471,17 @@ static int RunNativeInlineCommand(string nativePath, string scriptExtension, str
 
 static int RunNativeProcess(string exe, IEnumerable<string> arguments)
 {
+    if (TryRunNpmShimDirectly(exe, arguments, out int npmExitCode))
+        return npmExitCode;
+
     string extension = Path.GetExtension(exe);
     var startInfo = new ProcessStartInfo
     {
         UseShellExecute = false,
     };
+    string refreshedPath = BuildRefreshedPath();
+    startInfo.Environment["PATH"] = refreshedPath;
+    startInfo.Environment["Path"] = refreshedPath;
 
     if (extension.Equals(".cmd", StringComparison.OrdinalIgnoreCase) ||
         extension.Equals(".bat", StringComparison.OrdinalIgnoreCase))
@@ -484,7 +490,7 @@ static int RunNativeProcess(string exe, IEnumerable<string> arguments)
         startInfo.ArgumentList.Add("/d");
         startInfo.ArgumentList.Add("/s");
         startInfo.ArgumentList.Add("/c");
-        startInfo.ArgumentList.Add(QuoteForCmd(exe) + " " + string.Join(" ", arguments.Select(QuoteForCmd)));
+        startInfo.ArgumentList.Add($"set \"PATH={refreshedPath}\" && " + QuoteForCmd(exe) + " " + string.Join(" ", arguments.Select(QuoteForCmd)));
     }
     else
     {
@@ -503,6 +509,69 @@ static int RunNativeProcess(string exe, IEnumerable<string> arguments)
     }
     process.WaitForExit();
     return process.ExitCode;
+}
+
+static bool TryRunNpmShimDirectly(string exe, IEnumerable<string> arguments, out int exitCode)
+{
+    exitCode = 0;
+    string command = NormalizeCommandName(exe);
+    string fileName = Path.GetFileName(exe.Trim('"', '\''));
+    if (command is not ("npm" or "npx"))
+    {
+        if (fileName.Equals("npm.cmd", StringComparison.OrdinalIgnoreCase))
+            command = "npm";
+        else if (fileName.Equals("npx.cmd", StringComparison.OrdinalIgnoreCase))
+            command = "npx";
+    }
+
+    if (command is not ("npm" or "npx"))
+        return false;
+
+    string? dir = Path.GetDirectoryName(exe);
+    if (string.IsNullOrWhiteSpace(dir))
+        return false;
+
+    string node = Path.Combine(dir, "node.exe");
+    var nativeArgs = arguments.ToList();
+    if (command == "npx")
+    {
+        var packageIndex = nativeArgs.FindIndex(arg => arg.StartsWith("npm@", StringComparison.OrdinalIgnoreCase) || arg.Equals("npm", StringComparison.OrdinalIgnoreCase));
+        if (packageIndex >= 0)
+        {
+            command = "npm";
+            nativeArgs.RemoveAt(packageIndex);
+            nativeArgs.RemoveAll(arg => arg.Equals("-y", StringComparison.OrdinalIgnoreCase) || arg.Equals("--yes", StringComparison.OrdinalIgnoreCase));
+        }
+    }
+
+    string cli = Path.Combine(dir, "node_modules", "npm", "bin", command == "npm" ? "npm-cli.js" : "npx-cli.js");
+    if (!File.Exists(node) || !File.Exists(cli))
+        return false;
+
+    var startInfo = new ProcessStartInfo
+    {
+        FileName = node,
+        UseShellExecute = false,
+    };
+    string refreshedPath = BuildRefreshedPath();
+    startInfo.Environment["PATH"] = refreshedPath;
+    startInfo.Environment["Path"] = refreshedPath;
+    startInfo.ArgumentList.Add(cli);
+    foreach (var arg in nativeArgs)
+    {
+        startInfo.ArgumentList.Add(arg);
+    }
+
+    using var process = Process.Start(startInfo);
+    if (process is null)
+    {
+        Console.Error.WriteLine($"[SHIM] Failed to start native command: {node}");
+        exitCode = 127;
+        return true;
+    }
+    process.WaitForExit();
+    exitCode = process.ExitCode;
+    return true;
 }
 
 static bool TryRunNativeDirectCommand(string command, bool debug, out int exitCode)
@@ -748,6 +817,10 @@ static string? ResolveNativeCommand(string commandName)
     if ((Path.IsPathRooted(trimmed) || trimmed.Contains('\\') || trimmed.Contains('/')) && File.Exists(trimmed))
         return Path.GetFullPath(trimmed);
 
+    string? preferred = PreferredNativeCandidate(trimmed);
+    if (!string.IsNullOrWhiteSpace(preferred))
+        return preferred;
+
     var extensions = new List<string>();
     if (Path.HasExtension(trimmed))
     {
@@ -756,8 +829,9 @@ static string? ResolveNativeCommand(string commandName)
     else
     {
         string pathext = Environment.GetEnvironmentVariable("PATHEXT") ?? ".COM;.EXE;.BAT;.CMD;.PS1";
+        if (string.IsNullOrWhiteSpace(pathext))
+            pathext = ".COM;.EXE;.BAT;.CMD;.PS1";
         extensions.AddRange(pathext.Split(';', StringSplitOptions.RemoveEmptyEntries));
-        extensions.Add("");
     }
 
     string? path = BuildRefreshedPath();
@@ -777,12 +851,83 @@ static string? ResolveNativeCommand(string commandName)
             {
                 continue;
             }
-            if (File.Exists(candidate))
+            if (File.Exists(candidate) && !ShouldSkipPathCandidate(trimmed, candidate))
                 return candidate;
         }
     }
 
+    foreach (string candidate in FallbackNativeCandidates(trimmed))
+    {
+        if (File.Exists(candidate))
+            return candidate;
+    }
+
     return null;
+}
+
+static IEnumerable<string> FallbackNativeCandidates(string commandName)
+{
+    string normalized = NormalizeCommandName(commandName);
+    string userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+    string localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+    string systemRoot = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
+    string programFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
+    string programFilesX86 = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86);
+
+    return normalized switch
+    {
+        "git" => ExistingRoots(programFiles, programFilesX86)
+            .Select(root => Path.Combine(root, "Git", "cmd", "git.exe")),
+        "gh" => ExistingRoots(programFiles, programFilesX86)
+            .Select(root => Path.Combine(root, "GitHub CLI", "gh.exe")),
+        "dotnet" => ExistingRoots(programFiles)
+            .Select(root => Path.Combine(root, "dotnet", "dotnet.exe")),
+        "wsl" => ExistingRoots(systemRoot)
+            .Select(root => Path.Combine(root, "System32", "wsl.exe")),
+        "node" => ExistingRoots(userProfile, @"C:\nvm4w")
+            .Select(root => Path.Combine(root, root.EndsWith("nvm4w", StringComparison.OrdinalIgnoreCase) ? "nodejs" : Path.Combine("AppData", "Local", "nvm"), "node.exe")),
+        "npm" => ExistingRoots(userProfile, @"C:\nvm4w")
+            .Select(root => Path.Combine(root, root.EndsWith("nvm4w", StringComparison.OrdinalIgnoreCase) ? "nodejs" : Path.Combine("AppData", "Roaming", "npm"), "npm.cmd")),
+        "npx" => ExistingRoots(userProfile, @"C:\nvm4w")
+            .Select(root => Path.Combine(root, root.EndsWith("nvm4w", StringComparison.OrdinalIgnoreCase) ? "nodejs" : Path.Combine("AppData", "Roaming", "npm"), "npx.cmd")),
+        "python" or "python3" => ExistingRoots(localAppData)
+            .SelectMany(root => Directory.Exists(Path.Combine(root, "Programs", "Python"))
+                ? Directory.EnumerateDirectories(Path.Combine(root, "Programs", "Python"), "Python*")
+                : Array.Empty<string>())
+            .OrderByDescending(path => path, StringComparer.OrdinalIgnoreCase)
+            .Select(path => Path.Combine(path, "python.exe")),
+        "py" => ExistingRoots(systemRoot)
+            .Select(root => Path.Combine(root, "py.exe")),
+        _ => Array.Empty<string>()
+    };
+}
+
+static IEnumerable<string> ExistingRoots(params string[] roots)
+{
+    return roots.Where(root => !string.IsNullOrWhiteSpace(root));
+}
+
+static string? PreferredNativeCandidate(string commandName)
+{
+    string normalized = NormalizeCommandName(commandName);
+    string candidate = normalized switch
+    {
+        "npm" => @"C:\nvm4w\nodejs\npm.cmd",
+        "npx" => @"C:\nvm4w\nodejs\npx.cmd",
+        _ => ""
+    };
+    return File.Exists(candidate) ? candidate : null;
+}
+
+static bool ShouldSkipPathCandidate(string commandName, string candidate)
+{
+    string normalized = NormalizeCommandName(commandName);
+    if (normalized is not ("npm" or "npx"))
+        return false;
+
+    string? dir = Path.GetDirectoryName(candidate);
+    return !string.IsNullOrWhiteSpace(dir) &&
+        !File.Exists(Path.Combine(dir, "node.exe"));
 }
 
 static string BuildRefreshedPath()

@@ -11,6 +11,18 @@ $pass = 0
 $fail = 0
 $skip = 0
 
+function Resolve-WslExe {
+    $command = Get-Command wsl.exe -ErrorAction SilentlyContinue
+    if ($command) { return $command.Source }
+
+    $systemRoot = $env:SystemRoot
+    if (-not $systemRoot) { $systemRoot = "C:\Windows" }
+    $candidate = Join-Path $systemRoot "System32\wsl.exe"
+    if (Test-Path $candidate) { return $candidate }
+
+    return "wsl.exe"
+}
+
 function Invoke-ShimCommand {
     param(
         [string]$Command,
@@ -68,7 +80,13 @@ function Test-Smoke {
 
 function Test-WslAvailable {
     try {
-        $out = & wsl.exe -d $WslDistro -e echo ok 2>$null
+        if (Test-Path $ShimPath) {
+            $result = Invoke-ShimCommand -Command "wsl -d $WslDistro -- echo ok"
+            return ($result.ExitCode -eq 0 -and (($result.Stdout + $result.Stderr) -match "ok"))
+        }
+
+        $wslExe = Resolve-WslExe
+        $out = & $wslExe -d $WslDistro -e echo ok 2>$null
         return ($LASTEXITCODE -eq 0 -and $out -match "ok")
     } catch {
         return $false

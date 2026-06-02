@@ -11,31 +11,42 @@ internal sealed class AntigravitySettingsManager
 
     public void InstallOrRepair(InstallState state)
     {
-        var settingsPath = Path.Combine(_context.AppData, "Antigravity IDE", "User", "settings.json");
-        if (!File.Exists(settingsPath))
+        var settingsPaths = FindSettingsPaths().ToList();
+        if (settingsPaths.Count == 0)
         {
-            Log.Warn($"Antigravity IDE settings not found: {settingsPath}");
+            Log.Warn($"Antigravity settings not found under: {Path.Combine(_context.AppData, "Antigravity IDE")} or {Path.Combine(_context.AppData, "Antigravity")}");
             return;
         }
 
-        var patch = state.AntigravitySettings;
-        if (patch is null || string.IsNullOrWhiteSpace(patch.BackupPath) || !File.Exists(patch.BackupPath))
+        foreach (var settingsPath in settingsPaths)
         {
-            patch = new SettingsPatchState { SettingsPath = settingsPath, BackupPath = Backup.Copy(_context, settingsPath, "settings") };
-            state.AntigravitySettings = patch;
-        }
+            var patch = FindPatch(state, settingsPath);
+            if (patch is null || string.IsNullOrWhiteSpace(patch.BackupPath) || !File.Exists(patch.BackupPath))
+            {
+                patch = new SettingsPatchState { SettingsPath = settingsPath, BackupPath = Backup.Copy(_context, settingsPath, "settings") };
+                state.AntigravitySettingsPatches.RemoveAll(p => Paths.SamePath(p.SettingsPath, settingsPath));
+                state.AntigravitySettingsPatches.Add(patch);
+                state.AntigravitySettings ??= patch;
+            }
 
-        UpdateSettings(settingsPath, state.ShimPath);
-        Log.Ok($"Antigravity IDE settings merged: {settingsPath}");
+            UpdateSettings(settingsPath, state.ShimPath);
+            Log.Ok($"Antigravity settings merged: {settingsPath}");
+        }
     }
 
     public void Restore(InstallState state)
     {
-        var patch = state.AntigravitySettings;
-        if (patch is null || !File.Exists(patch.BackupPath)) { return; }
-        Directory.CreateDirectory(Path.GetDirectoryName(patch.SettingsPath)!);
-        File.Copy(patch.BackupPath, patch.SettingsPath, overwrite: true);
-        Log.Ok($"Restored Antigravity settings: {patch.SettingsPath}");
+        var patches = state.AntigravitySettingsPatches.Count > 0
+            ? state.AntigravitySettingsPatches
+            : state.AntigravitySettings is null ? [] : [state.AntigravitySettings];
+
+        foreach (var patch in patches)
+        {
+            if (!File.Exists(patch.BackupPath)) { continue; }
+            Directory.CreateDirectory(Path.GetDirectoryName(patch.SettingsPath)!);
+            File.Copy(patch.BackupPath, patch.SettingsPath, overwrite: true);
+            Log.Ok($"Restored Antigravity settings: {patch.SettingsPath}");
+        }
     }
 
     public void SelfTest()
@@ -78,29 +89,56 @@ internal sealed class AntigravitySettingsManager
 
     public static CheckResult Check(ShellfixContext context, InstallState? state)
     {
-        var settingsPath = state?.AntigravitySettings?.SettingsPath ?? Path.Combine(context.AppData, "Antigravity IDE", "User", "settings.json");
-        if (!File.Exists(settingsPath))
+        var settingsPaths = FindSettingsPaths(context).ToList();
+        if (settingsPaths.Count == 0)
         {
-            return new CheckResult { Name = "antigravity", Status = "warn", Message = $"Settings not found: {settingsPath}", Remediation = "Install or launch Antigravity IDE once, then run shellfix repair antigravity." };
+            return new CheckResult { Name = "antigravity", Status = "warn", Message = "Antigravity settings not found.", Remediation = "Install or launch Antigravity once, then run shellfix repair antigravity." };
         }
 
-        var content = File.ReadAllText(settingsPath, Utf8.NoBom);
-        var hasAgent = Regex.IsMatch(content, @"""terminal\.integrated\.agentHostProfile\.windows""\s*:\s*""shellfix""");
-        var hasDefault = Regex.IsMatch(content, @"""terminal\.integrated\.defaultProfile\.windows""\s*:\s*""shellfix""");
-        var hasAutomation = Regex.IsMatch(content, @"""terminal\.integrated\.automationProfile\.windows""[\s\S]*powershell\.exe");
-        var conptyDisabled = Regex.IsMatch(content, @"""terminal\.integrated\.windowsEnableConpty""\s*:\s*false");
-        var pass = hasAgent && hasDefault && hasAutomation && !conptyDisabled;
+        var incomplete = settingsPaths.Where(path => !IsPatched(path, out _)).ToList();
+        var conptyDisabled = settingsPaths.Where(path => IsPatched(path, out var disabled) && disabled).ToList();
+        var pass = incomplete.Count == 0 && conptyDisabled.Count == 0;
         return new CheckResult
         {
             Name = "antigravity",
             Status = pass ? "pass" : "fail",
             Message = pass
-                ? "Agent, automation, and default terminal settings route through shellfix with ConPTY enabled."
-                : conptyDisabled
-                    ? "Antigravity routes through shellfix, but legacy ConPTY-disabled terminal mode is still set."
-                    : "Antigravity settings are incomplete.",
+                ? $"Agent, automation, and default terminal settings route through shellfix with ConPTY enabled in {settingsPaths.Count} settings file(s)."
+                : conptyDisabled.Count > 0
+                    ? $"Antigravity routes through shellfix, but legacy ConPTY-disabled terminal mode is still set: {string.Join("; ", conptyDisabled)}"
+                    : $"Antigravity settings are incomplete: {string.Join("; ", incomplete)}",
             Remediation = "Run shellfix repair antigravity."
         };
+    }
+
+    private IEnumerable<string> FindSettingsPaths() => FindSettingsPaths(_context);
+
+    private static IEnumerable<string> FindSettingsPaths(ShellfixContext context)
+    {
+        var names = new[] { "Antigravity IDE", "Antigravity" };
+        return names
+            .Select(name => Path.Combine(context.AppData, name, "User", "settings.json"))
+            .Where(File.Exists)
+            .Distinct(StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static SettingsPatchState? FindPatch(InstallState state, string settingsPath)
+    {
+        var patch = state.AntigravitySettingsPatches.FirstOrDefault(p => Paths.SamePath(p.SettingsPath, settingsPath));
+        if (patch is not null) { return patch; }
+        return state.AntigravitySettings is not null && Paths.SamePath(state.AntigravitySettings.SettingsPath, settingsPath)
+            ? state.AntigravitySettings
+            : null;
+    }
+
+    private static bool IsPatched(string settingsPath, out bool conptyDisabled)
+    {
+        var content = File.ReadAllText(settingsPath, Utf8.NoBom);
+        var hasAgent = Regex.IsMatch(content, @"""terminal\.integrated\.agentHostProfile\.windows""\s*:\s*""shellfix""");
+        var hasDefault = Regex.IsMatch(content, @"""terminal\.integrated\.defaultProfile\.windows""\s*:\s*""shellfix""");
+        var hasAutomation = Regex.IsMatch(content, @"""terminal\.integrated\.automationProfile\.windows""[\s\S]*powershell\.exe");
+        conptyDisabled = Regex.IsMatch(content, @"""terminal\.integrated\.windowsEnableConpty""\s*:\s*false");
+        return hasAgent && hasDefault && hasAutomation;
     }
 
     private static void UpdateSettings(string settingsPath, string shimPath)

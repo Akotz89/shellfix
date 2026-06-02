@@ -28,9 +28,15 @@ internal sealed class TestCommand
             return RunTest("Incident route fixtures", () => RunIncidentRouteFixtures(_context, options));
         }
 
+        if (options.Has("antigravity-guard"))
+        {
+            return RunTest("Antigravity run_command guard", AntigravityRunCommandGuard.SelfTest);
+        }
+
         if (!options.Has("shortcuts"))
         {
             failures += RunTest("Antigravity settings merge", () => new AntigravitySettingsManager(_context).SelfTest());
+            failures += RunTest("Antigravity run_command guard", AntigravityRunCommandGuard.SelfTest);
             failures += RunTest("Profile install/remove", () => ProfileInstaller.SelfTest(_context));
             failures += RunTest("PATH insertion", PathManager.SelfTest);
             failures += RunTest("State serialization", () => StateStore.SelfTest(_context));

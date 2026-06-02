@@ -184,6 +184,7 @@ When the shellfix profile is loaded, wraps `git`, `npm`, `npx`, `dotnet`, `gh`, 
 shellfix install --wsl-distro Ubuntu-24.04
 shellfix status --json
 shellfix doctor
+shellfix guard antigravity-run-command
 shellfix repair antigravity
 shellfix test
 shellfix uninstall
@@ -371,19 +372,22 @@ Expected debug lines include `PS via -File` and `Wrote temp script: ...\shellfix
 
 ## FAQ
 
-**Q: Does this work with Cursor / Windsurf / Copilot / Antigravity?**  
+**Q: Does this work with Cursor / Windsurf / Copilot / Antigravity?**
 A: Yes. Both one-shot (`-Command`) and interactive (stdin) invocations are handled. Configure the IDE's terminal profile to point to the shim binary.
 
-**Q: Will this break my normal PowerShell?**  
+**Q: Will this break my normal PowerShell?**
 A: No. Kill switch: `$env:PWSH_SHIM_BYPASS = "1"`. Pure PS commands pass through unchanged.
 
 **Q: Why do I still see error-styled output sometimes?**
 A: NativeCommandError cleanup is profile-layer behavior. It applies when the shellfix profile is loaded and only for tools in the wrapper list (`git`, `npm`, `gh`, etc.). Commands launched with `-NoProfile`, or tools outside that list, can still show normal PowerShell stderr behavior.
 
-**Q: What about PowerShell 7?**  
+**Q: Why can an Antigravity `run_command` WSL loop still fail after `shellfix doctor` passes?**
+A: `shellfix doctor` proves the installed shim, CLI, PATH, Antigravity settings, and live child-process state. It does not prove that a particular inline `run_command` string reached Shellfix before Windows/PowerShell parsed it. If Antigravity submits a fragile inline command such as `wsl ... bash -c 'for f in ...; do echo "$f"; done'` through a path that pre-parses the string, `$f` can be expanded away before bash sees it. Put complex bash bodies in a scratch `.sh` file and run `wsl -d <distro> -- bash /mnt/c/.../script.sh`. For Antigravity PreToolUse hooks, call `shellfix guard antigravity-run-command`; it emits `{"decision":"deny","reason":"..."}` for fragile inline WSL/bash payloads and `{"decision":"allow"}` for safe commands.
+
+**Q: What about PowerShell 7?**
 A: Shellfix **prefers pwsh 7** as its backend when `C:\Program Files\PowerShell\7\pwsh.exe` is available. This eliminates most PS 5.1 quirks (`&&`/`||`, NativeCommandError, UTF-8 encoding) natively. The shim and bash wrappers still provide value for cross-shell routing, path translation, and `-File` mode escaping protection. Set `SHELLFIX_FORCE_PS5=1` to revert to PS 5.1 if needed.
 
-**Q: Why not just switch to bash/Git Bash?**  
+**Q: Why not just switch to bash/Git Bash?**
 A: Many IDE agent frameworks default to PowerShell on Windows. The shim lets them work without reconfiguring the agent itself.
 
 ## Known Limitations
@@ -391,6 +395,7 @@ A: Many IDE agent frameworks default to PowerShell on Windows. The shim lets the
 - WSL routing requires the configured distro to exist and be running. Use `.\install.ps1 -WslDistro "<name>"` or set `SHELLFIX_WSL_DISTRO` when the default `Ubuntu-24.04` is not correct.
 - Native tool cleanup is allowlisted. Tools outside `$nativeTools` can still emit stderr or ANSI output until added to the profile wrapper list.
 - Shortcut patching affects the IDE process tree launched from the patched shortcut. Already-running IDE windows and shells launched from other shortcuts may keep their old PATH until restarted.
+- Antigravity `run_command` can still pre-parse fragile inline WSL/bash payloads if the payload does not reach Shellfix first. `shellfix doctor` catches settings and live-process bypasses, while `shellfix guard antigravity-run-command` gives Antigravity hooks a productized way to block complex bash loops and multiline inline bodies before they reach the unsafe parser path.
 - All PS one-shot commands go through temp `.ps1` files. This adds ~2ms overhead per command. Commands that depend on `-Command` expression evaluation semantics (bare expressions like `2+2`) need wrapping in `Write-Output`.
 - If routing looks wrong, run `shellfix doctor` or `Test-ShellfixActivation` from the affected terminal. The profile stays quiet by default; set `SHELLFIX_WARN_INACTIVE=1` only when you want an explicit warning for shells that loaded the profile without the shim.
 
@@ -467,6 +472,23 @@ For Antigravity IDE, Shellfix does not patch shortcuts. Antigravity keeps normal
 - Sets `terminal.integrated.windowsEnableConpty` to `true` so the compiled shim runs through Antigravity's modern terminal host
 
 Run `shellfix repair antigravity` to reapply these settings, or `.\install.ps1 -TestAntigravitySettings` to verify the merge path without touching real settings. If Antigravity was open during repair or reinstall, close and reopen stale windows so new agent terminals inherit the repaired settings; `shellfix doctor` reports live bypassing child processes and stale ConPTY-disabled terminal mode.
+
+Antigravity can still submit a `run_command` string before the integrated terminal profile gets control. For PreToolUse hooks, Shellfix ships a guard command that reads the Antigravity hook JSON from stdin and blocks fragile inline WSL/bash payloads:
+
+```json
+{
+  "matcher": "run_command",
+  "hooks": [
+    {
+      "type": "command",
+      "command": "shellfix guard antigravity-run-command",
+      "timeout": 5
+    }
+  ]
+}
+```
+
+The guard allows normal commands and script-file WSL calls. It denies command shapes such as `wsl -d Ubuntu-24.04 -- bash -c 'for f in ...; do echo "$f"; done'` and tells the agent to write a scratch `.sh` file instead.
 
 **Supported IDEs:**
 - Visual Studio Code / VS Code Insiders
